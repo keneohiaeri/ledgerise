@@ -137,12 +137,12 @@ ZOHO_ORGANIZATION_ID=...
 
 Mapping rules are configured through the Ledgerise UI under **Settings > Mapping Rules**. Each rule defines:
 
-- **Product line** -- which of your product lines this rule applies to
-- **Biller** (optional) -- the specific biller or counterparty
-- **Biller category** (optional) -- used as a fallback when no exact biller match exists
-- **Debit account** -- the COA account to debit
-- **Credit account(s)** -- one or more COA accounts to credit, with split percentages if applicable
-- **Status** -- active or inactive
+- **Product line** - which of your product lines this rule applies to
+- **Biller** (optional) - the specific biller or counterparty
+- **Biller category** (optional) - used as a fallback when no exact biller match exists
+- **Debit account** - the COA account to debit
+- **Credit account(s)** - one or more COA accounts to credit, with split percentages if applicable
+- **Status** - active or inactive
 
 Rules are evaluated in priority order: exact biller match, then biller category, then product line catch-all.
 

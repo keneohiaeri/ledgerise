@@ -397,10 +397,10 @@ Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`
 
 Your PR description should cover:
 
-1. **What this PR does** -- a short summary of the change
-2. **Why** -- the problem it solves or the use case it enables
-3. **How to test it** -- what a reviewer should do to verify the change works
-4. **Any known limitations** -- edge cases not handled, follow-up work needed
+1. **What this PR does** - a short summary of the change
+2. **Why** - the problem it solves or the use case it enables
+3. **How to test it** - what a reviewer should do to verify the change works
+4. **Any known limitations** - edge cases not handled, follow-up work needed
 
 ### Review process
 
