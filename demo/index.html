@@ -1,0 +1,2645 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ledgerise</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div class="layout">
+
+    <!-- ══════════════════════════ TOP NAV ══════════════════════════ -->
+    <nav class="topnav">
+      <div class="topnav-logo">
+        <div class="logo-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 5.5h5.2c1.1 0 2 .9 2 2V19H7c-1.1 0-2-.9-2-2V5.5Z" />
+            <path d="M19 5.5h-4.8c-1.1 0-2 .9-2 2V19H17c1.1 0 2-.9 2-2V5.5Z" />
+            <path d="M8 9h2" />
+            <path d="M8 12.5h2" />
+            <path d="M14.5 9h1.8" />
+            <path d="M8.25 16.25l3-3 2.15 2.15 3.85-4.65" />
+            <path d="M15 10.75h2.25V13" />
+          </svg>
+        </div>
+        <span class="logo-wordmark">Ledgerise</span>
+        <span class="logo-version">v0.1</span>
+      </div>
+
+      <div class="topnav-nav">
+        <!-- Order: Transactions → Mapping Rules → Journal Log → Settings
+           Follows the operational data flow: data in → classify → output → config -->
+        <button class="nav-tab active" data-screen="transactions">
+          Transactions
+          <span class="nav-tab-badge" id="badge-tx">34</span>
+        </button>
+        <button class="nav-tab" data-screen="mapping-rules">
+          Mapping Rules
+        </button>
+        <button class="nav-tab" data-screen="journal-log">
+          Journal Log
+          <span class="nav-tab-badge" id="badge-jl">12</span>
+        </button>
+        <button class="nav-tab" data-screen="settings">
+          Settings
+        </button>
+      </div>
+
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto;flex-shrink:0;gap:6px"
+        onclick="showToast('Logged out')">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h3" />
+          <path d="M10 11l3-3-3-3M13 8H6" />
+        </svg>
+        Log out
+      </button>
+    </nav>
+
+    <!-- ══════════════════════════ MAIN ══════════════════════════ -->
+    <main class="main">
+
+      <!-- ─────────────────── TRANSACTIONS (default) ─────────────────── -->
+      <section class="screen active" id="screen-transactions">
+        <div class="page-header">
+          <div>
+            <h1>Transactions</h1>
+            <p>All normalized records ingested by inbound adapters</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-secondary" onclick="showToast('Opening CSV import…')">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M8 10V2M5 5l3-3 3 3" />
+                <path d="M2 12h12" />
+              </svg>
+              Import CSV
+            </button>
+            <button class="btn btn-secondary">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M8 2v8M5 7l3 3 3-3" />
+                <path d="M2 12h12" />
+              </svg>
+              Export CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="stat-bar cols-4">
+          <div class="stat-cell">
+            <div class="stat-label">Total Today</div>
+            <div class="stat-value">3,104</div>
+            <div class="stat-sub">via 3 active adapters</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Settled</div>
+            <div class="stat-value ok">2,991</div>
+            <div class="stat-sub ok">96.5% settlement rate</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Unmapped</div>
+            <div class="stat-value warn">34</div>
+            <div class="stat-sub">No matching mapping rule</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Pending</div>
+            <div class="stat-value">79</div>
+            <div class="stat-sub">Awaiting settlement</div>
+          </div>
+        </div>
+
+        <div class="filter-bar">
+          <input class="fi" type="date" value="2026-05-31" style="width:140px">
+          <span style="color:var(--color-text-3);font-size:var(--text-sm)">to</span>
+          <input class="fi" type="date" value="2026-05-31" style="width:140px">
+          <div class="bar-sep"></div>
+          <select class="fi" style="width:130px">
+            <option>All Statuses</option>
+            <option>Settled</option>
+            <option>Pending</option>
+            <option>Failed</option>
+            <option>Reversed</option>
+            <option>Disputed</option>
+          </select>
+          <select class="fi" style="width:155px">
+            <option>All Posting Status</option>
+            <option>Unposted</option>
+            <option>Posted</option>
+            <option>Unmapped</option>
+            <option>Failed</option>
+            <option>Duplicate</option>
+          </select>
+          <select class="fi" style="width:170px">
+            <option>All Adapters</option>
+            <option>paystack-webhook</option>
+            <option>flutterwave-webhook</option>
+            <option>csv-import</option>
+            <option>mpesa-poll</option>
+          </select>
+          <select class="fi" style="width:120px">
+            <option>Environment</option>
+            <option>Live</option>
+            <option>Test</option>
+          </select>
+          <div class="spacer"></div>
+          <button class="btn btn-ghost btn-sm" id="btn-unmapped-only" onclick="toggleQuickFilter(this)">
+            Unmapped only
+          </button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Transaction ID</th>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Dir</th>
+                <th>Channel</th>
+                <th>Product Line</th>
+                <th>Biller</th>
+                <th>Status</th>
+                <th>Posting</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr onclick="openTxDrawer('TXN-00419')">
+                <td class="mono">TXN-00419</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.electricity</span></td>
+                <td class="amt">₦5,000.00</td>
+                <td><span class="dir-badge debit">DR</span></td>
+                <td><span class="channel-tag">mobile</span></td>
+                <td class="dim">consumer-app</td>
+                <td>ikeja-electric</td>
+                <td><span class="badge settled"><span class="badge-dot"></span>Settled</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openTxDrawer('TXN-00419')">View</button></td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00420')">
+                <td class="mono">TXN-00420</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.airtime</span></td>
+                <td class="amt">₦200.00</td>
+                <td><span class="dir-badge debit">DR</span></td>
+                <td><span class="channel-tag">ussd</span></td>
+                <td class="dim">consumer-app</td>
+                <td>mtn</td>
+                <td><span class="badge settled"><span class="badge-dot"></span>Settled</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openTxDrawer('TXN-00420')">View</button></td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00421')">
+                <td class="mono">TXN-00421</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">transfer.wallet-to-bank</span></td>
+                <td class="amt">₦15,000.00</td>
+                <td><span class="dir-badge debit">DR</span></td>
+                <td><span class="channel-tag">api</span></td>
+                <td class="dim">consumer-app</td>
+                <td class="dim">—</td>
+                <td><span class="badge settled"><span class="badge-dot"></span>Settled</span></td>
+                <td><span class="badge failed"><span class="badge-dot"></span>Failed</span></td>
+                <td><button class="btn-link danger"
+                    onclick="event.stopPropagation();showToast('Retry queued for TXN-00421')">Retry</button></td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00423')">
+                <td class="mono">TXN-00423</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">collection.pos</span></td>
+                <td class="amt">₦8,500.00</td>
+                <td><span class="dir-badge credit">CR</span></td>
+                <td><span class="channel-tag">pos</span></td>
+                <td class="dim">pos-network</td>
+                <td class="dim">—</td>
+                <td><span class="badge settled"><span class="badge-dot"></span>Settled</span></td>
+                <td><span class="badge unmapped"><span class="badge-dot"></span>Unmapped</span></td>
+                <td><button class="btn-link primary" onclick="event.stopPropagation();goToMappingRules()">Assign
+                    Rule</button></td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00424')">
+                <td class="mono">TXN-00424</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.cable-tv</span></td>
+                <td class="amt">₦4,200.00</td>
+                <td><span class="dir-badge debit">DR</span></td>
+                <td><span class="channel-tag">mobile</span></td>
+                <td class="dim">consumer-app</td>
+                <td>dstv</td>
+                <td><span class="badge settled"><span class="badge-dot"></span>Settled</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openTxDrawer('TXN-00424')">View</button></td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00426')">
+                <td class="mono">TXN-00426</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">agency.cash-in</span></td>
+                <td class="amt">₦50,000.00</td>
+                <td><span class="dir-badge credit">CR</span></td>
+                <td><span class="channel-tag">agent</span></td>
+                <td class="dim">agency-banking</td>
+                <td class="dim">—</td>
+                <td><span class="badge settled"><span class="badge-dot"></span>Settled</span></td>
+                <td><span class="badge unmapped"><span class="badge-dot"></span>Unmapped</span></td>
+                <td><button class="btn-link primary" onclick="event.stopPropagation();goToMappingRules()">Assign
+                    Rule</button></td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00430')">
+                <td class="mono">TXN-00430</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.water</span></td>
+                <td class="amt">₦2,500.00</td>
+                <td><span class="dir-badge debit">DR</span></td>
+                <td><span class="channel-tag">web</span></td>
+                <td class="dim">consumer-app</td>
+                <td>lawma</td>
+                <td><span class="badge pending"><span class="badge-dot"></span>Pending</span></td>
+                <td><span class="badge pending"><span class="badge-dot"></span>Unposted</span></td>
+                <td class="dim" style="font-size:var(--text-xs)">Awaiting settlement</td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00431')">
+                <td class="mono">TXN-00431</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">transfer.wallet-to-bank</span></td>
+                <td class="amt">₦75,000.00</td>
+                <td><span class="dir-badge debit">DR</span></td>
+                <td><span class="channel-tag">api</span></td>
+                <td class="dim">api-gateway</td>
+                <td class="dim">—</td>
+                <td><span class="badge reversed"><span class="badge-dot"></span>Reversed</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openJournalDrawer('JNL-0009')">View reversal</button></td>
+              </tr>
+              <tr onclick="openTxDrawer('TXN-00401')">
+                <td class="mono">TXN-00401</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.electricity</span></td>
+                <td class="amt">₦100.00</td>
+                <td><span class="dir-badge debit">DR</span></td>
+                <td><span class="channel-tag">api</span></td>
+                <td class="dim">consumer-app</td>
+                <td>ikeja-electric</td>
+                <td><span class="badge settled"><span class="badge-dot"></span>Settled</span></td>
+                <td><span class="badge test-env">Test env — blocked</span></td>
+                <td class="dim">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─────────────────── MAPPING RULES ─────────────────── -->
+      <section class="screen" id="screen-mapping-rules">
+        <div class="page-header">
+          <div>
+            <h1>Mapping Rules</h1>
+            <p>Configure which COA accounts to debit and credit per transaction pattern</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary" onclick="openRuleDrawer()">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <line x1="8" y1="2" x2="8" y2="14" />
+                <line x1="2" y1="8" x2="14" y2="8" />
+              </svg>
+              Add Rule
+            </button>
+          </div>
+        </div>
+
+        <div class="stat-bar cols-3">
+          <div class="stat-cell">
+            <div class="stat-label">Active Rules</div>
+            <div class="stat-value ok">47</div>
+            <div class="stat-sub">across 5 product lines</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Unmapped Today</div>
+            <div class="stat-value warn">34</div>
+            <div class="stat-sub">transactions need rules</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Inactive Rules</div>
+            <div class="stat-value">3</div>
+            <div class="stat-sub">manually deactivated</div>
+          </div>
+        </div>
+
+        <div class="filter-bar">
+          <select class="fi" style="width:165px">
+            <option>All Product Lines</option>
+            <option>consumer-app</option>
+            <option>pos-network</option>
+            <option>ussd-channel</option>
+            <option>agency-banking</option>
+            <option>api-gateway</option>
+          </select>
+          <select class="fi" style="width:130px">
+            <option>All Statuses</option>
+            <option>Active</option>
+            <option>Inactive</option>
+          </select>
+          <input class="fi" type="text" placeholder="Search biller or account code…" style="width:230px">
+        </div>
+
+        <div class="table-wrap">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Product Line</th>
+                <th>Biller</th>
+                <th>Category</th>
+                <th>Type Filter</th>
+                <th>Entries</th>
+                <th>Debit Account</th>
+                <th>Credit Account(s)</th>
+                <th>Status</th>
+                <th>Last Match</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr onclick="openRuleDrawer('R001')">
+                <td style="font-weight:500">consumer-app</td>
+                <td>ikeja-electric</td>
+                <td class="dim">electricity</td>
+                <td><span class="type-tag">payment.electricity</span></td>
+                <td class="dim" style="font-size:11px">1</td>
+                <td><span class="chip asset">A1050</span> <span class="dim" style="font-size:11px">Float —
+                    BuyPower</span></td>
+                <td><span class="chip income">I4010</span> <span class="dim" style="font-size:11px">Revenue — Bills ·
+                    100%</span></td>
+                <td><span class="badge active-rule">Active</span></td>
+                <td class="dim">2m ago</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle" title="Toggle active"><input type="checkbox" checked
+                        onchange="showToggleModal(this,'consumer-app + ikeja-electric rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R001')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+              <tr onclick="openRuleDrawer('R002')">
+                <td style="font-weight:500">consumer-app</td>
+                <td>mtn</td>
+                <td class="dim">airtime</td>
+                <td><span class="type-tag">payment.airtime</span></td>
+                <td class="dim" style="font-size:11px">1</td>
+                <td><span class="chip asset">A1050</span> <span class="dim" style="font-size:11px">Float —
+                    BuyPower</span></td>
+                <td><span class="chip income">I4010</span> <span class="dim" style="font-size:11px">Revenue — Bills ·
+                    100%</span></td>
+                <td><span class="badge active-rule">Active</span></td>
+                <td class="dim">4m ago</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle"><input type="checkbox" checked
+                        onchange="showToggleModal(this,'consumer-app + mtn airtime rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R002')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+              <tr onclick="openRuleDrawer('R003')">
+                <td style="font-weight:500">consumer-app</td>
+                <td>dstv</td>
+                <td class="dim">cable-tv</td>
+                <td><span class="type-tag">payment.cable-tv</span></td>
+                <td class="dim" style="font-size:11px">1</td>
+                <td><span class="chip asset">A1050</span> <span class="dim" style="font-size:11px">Float —
+                    BuyPower</span></td>
+                <td><span class="chip income">I4010</span> <span class="dim" style="font-size:11px">Revenue — Bills ·
+                    100%</span></td>
+                <td><span class="badge active-rule">Active</span></td>
+                <td class="dim">18m ago</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle"><input type="checkbox" checked
+                        onchange="showToggleModal(this,'consumer-app + dstv rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R003')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+              <tr onclick="openRuleDrawer('R004')">
+                <td style="font-weight:500">consumer-app</td>
+                <td class="dim">—</td>
+                <td class="dim">—</td>
+                <td><span class="type-tag">transfer.wallet-to-bank</span></td>
+                <td class="dim" style="font-size:11px">1</td>
+                <td><span class="chip asset">A1010</span> <span class="dim" style="font-size:11px">Cash &amp;
+                    Equivalents</span></td>
+                <td><span class="chip liability">L2010</span> <span class="dim" style="font-size:11px">Customer Wallets
+                    · 100%</span></td>
+                <td><span class="badge active-rule">Active</span></td>
+                <td class="dim">31m ago</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle"><input type="checkbox" checked
+                        onchange="showToggleModal(this,'consumer-app wallet-to-bank rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R004')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+              <!-- Compound rule example -->
+              <tr onclick="openRuleDrawer('R008')">
+                <td style="font-weight:500">consumer-app</td>
+                <td>aedc</td>
+                <td class="dim">electricity</td>
+                <td><span class="type-tag">payment.electricity</span></td>
+                <td>
+                  <span class="badge" style="background:#ede9fe;color:#6d28d9;font-size:10px">3 entries</span>
+                </td>
+                <td>
+                  <div class="chip-stack">
+                    <span><span class="chip liability">L2010</span> <span class="dim" style="font-size:11px">Wallet
+                        debit</span></span>
+                    <span><span class="chip asset">A1050</span> <span class="dim" style="font-size:11px">Float
+                        debit</span></span>
+                    <span><span class="chip liability">L2030</span> <span class="dim" style="font-size:11px">AEDC
+                        clearing debit</span></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="chip-stack">
+                    <span><span class="chip asset">A1050</span> <span class="dim" style="font-size:11px">Float
+                        credit</span></span>
+                    <span><span class="chip liability">L2030</span> <span class="dim" style="font-size:11px">AEDC
+                        clearing credit</span></span>
+                    <span><span class="chip income">I4010</span> <span class="dim" style="font-size:11px">Revenue ·
+                        100%</span></span>
+                  </div>
+                </td>
+                <td><span class="badge active-rule">Active</span></td>
+                <td class="dim">45m ago</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle"><input type="checkbox" checked
+                        onchange="showToggleModal(this,'consumer-app + aedc compound rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R008')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+              <tr onclick="openRuleDrawer('R005')">
+                <td style="font-weight:500">consumer-app</td>
+                <td class="dim">—</td>
+                <td class="dim">—</td>
+                <td><span style="font-size:11px;color:var(--color-text-3);font-style:italic">Catch-all</span></td>
+                <td class="dim" style="font-size:11px">1</td>
+                <td><span class="chip asset">A1010</span> <span class="dim" style="font-size:11px">Cash &amp;
+                    Equivalents</span></td>
+                <td>
+                  <div class="chip-stack">
+                    <span><span class="chip income">I4010</span> <span class="dim" style="font-size:11px">Revenue —
+                        Bills · 80%</span></span>
+                    <span><span class="chip income">I4020</span> <span class="dim" style="font-size:11px">Revenue — Fees
+                        · 20%</span></span>
+                  </div>
+                </td>
+                <td><span class="badge active-rule">Active</span></td>
+                <td class="dim">1h ago</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle"><input type="checkbox" checked
+                        onchange="showToggleModal(this,'consumer-app catch-all rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R005')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+              <tr onclick="openRuleDrawer('R006')">
+                <td style="font-weight:500">pos-network</td>
+                <td class="dim">—</td>
+                <td class="dim">—</td>
+                <td><span class="type-tag">collection.pos</span></td>
+                <td class="dim" style="font-size:11px">1</td>
+                <td><span class="chip asset">A1060</span> <span class="dim" style="font-size:11px">Float — POS
+                    Terminals</span></td>
+                <td><span class="chip liability">L2010</span> <span class="dim" style="font-size:11px">Customer Wallets
+                    · 100%</span></td>
+                <td><span class="badge inactive-rule">Inactive</span></td>
+                <td class="dim">3d ago</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle"><input type="checkbox"
+                        onchange="showToggleModal(this,'pos-network collection.pos rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R006')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+              <tr onclick="openRuleDrawer('R007')">
+                <td style="font-weight:500">agency-banking</td>
+                <td class="dim">—</td>
+                <td class="dim">—</td>
+                <td><span class="type-tag">agency.cash-in</span></td>
+                <td class="dim" style="font-size:11px">1</td>
+                <td><span class="chip suspense">X9999</span> <span class="dim" style="font-size:11px">Suspense</span>
+                </td>
+                <td><span class="chip liability">L2010</span> <span class="dim" style="font-size:11px">Customer Wallets
+                    · 100%</span></td>
+                <td><span class="badge inactive-rule">Inactive</span></td>
+                <td class="dim">Never</td>
+                <td onclick="event.stopPropagation()">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <label class="toggle"><input type="checkbox"
+                        onchange="showToggleModal(this,'agency-banking cash-in rule')"><span
+                        class="toggle-track"></span><span class="toggle-thumb"></span></label>
+                    <button class="btn-link primary" onclick="openRuleDrawer('R007')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─────────────────── JOURNAL LOG ─────────────────── -->
+      <section class="screen" id="screen-journal-log">
+        <div class="page-header">
+          <div>
+            <h1>Journal Log</h1>
+            <p>Double-entry records generated by the engine and posted to your accounting system via the configured
+              outbound adapter</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-secondary">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M8 2v8M5 7l3 3 3-3" />
+                <path d="M2 12h12" />
+              </svg>
+              Export CSV
+            </button>
+            <button class="btn btn-primary" onclick="showToast('Engine run triggered — check back in a moment')">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M13.5 8A5.5 5.5 0 112 8M13.5 8V5M13.5 8H10.5" />
+              </svg>
+              Run Engine Now
+            </button>
+          </div>
+        </div>
+
+        <div class="stat-bar cols-4">
+          <div class="stat-cell">
+            <div class="stat-label">Posted Today</div>
+            <div class="stat-value ok">2,847</div>
+            <div class="stat-sub ok">↑ 14% vs yesterday</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Failed</div>
+            <div class="stat-value bad">12</div>
+            <div class="stat-sub">3 retry exhausted</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Unmapped</div>
+            <div class="stat-value warn">34</div>
+            <div class="stat-sub">Parked in suspense (X9999)</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Last Engine Run</div>
+            <div class="stat-value" style="font-size:1.15rem">2m ago</div>
+            <div class="stat-sub">31 May 2026 · 14:03 UTC</div>
+          </div>
+        </div>
+
+        <div class="filter-bar">
+          <input class="fi" type="date" value="2026-05-31" style="width:140px">
+          <span style="color:var(--color-text-3);font-size:var(--text-sm)">to</span>
+          <input class="fi" type="date" value="2026-05-31" style="width:140px">
+          <div class="bar-sep"></div>
+          <select class="fi" style="width:130px">
+            <option>All Statuses</option>
+            <option>Posted</option>
+            <option>Failed</option>
+            <option>Unmapped</option>
+            <option>Pending</option>
+            <option>Retry exhausted</option>
+          </select>
+          <select class="fi" style="width:155px">
+            <option>All Product Lines</option>
+            <option>consumer-app</option>
+            <option>pos-network</option>
+            <option>ussd-channel</option>
+            <option>agency-banking</option>
+          </select>
+          <select class="fi" style="width:130px">
+            <option>All Billers</option>
+            <option>ikeja-electric</option>
+            <option>mtn</option>
+            <option>dstv</option>
+            <option>airtel</option>
+          </select>
+          <div class="spacer"></div>
+          <button class="btn btn-ghost btn-sm" onclick="toggleQuickFilter(this)">
+            Failed &amp; unmapped only
+          </button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Journal ID</th>
+                <th>Transaction ID</th>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Product Line</th>
+                <th>Debit</th>
+                <th>Credit</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr onclick="openJournalDrawer('JNL-0001')">
+                <td class="mono">JNL-20260531-0001</td>
+                <td class="mono">TXN-00419</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.electricity</span></td>
+                <td class="amt">₦5,000.00</td>
+                <td class="dim">consumer-app</td>
+                <td><span class="chip asset">A1050</span></td>
+                <td><span class="chip income">I4010</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openJournalDrawer('JNL-0001')">View</button></td>
+              </tr>
+              <tr onclick="openJournalDrawer('JNL-0002')">
+                <td class="mono">JNL-20260531-0002</td>
+                <td class="mono">TXN-00420</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.airtime</span></td>
+                <td class="amt">₦200.00</td>
+                <td class="dim">consumer-app</td>
+                <td><span class="chip asset">A1050</span></td>
+                <td><span class="chip income">I4010</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openJournalDrawer('JNL-0002')">View</button></td>
+              </tr>
+              <tr onclick="openJournalDrawer('JNL-0003')">
+                <td class="mono">JNL-20260531-0003</td>
+                <td class="mono">TXN-00421</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">transfer.wallet-to-bank</span></td>
+                <td class="amt">₦15,000.00</td>
+                <td class="dim">consumer-app</td>
+                <td><span class="chip asset">A1010</span></td>
+                <td><span class="chip liability">L2010</span></td>
+                <td><span class="badge failed"><span class="badge-dot"></span>Failed</span></td>
+                <td><button class="btn-link danger"
+                    onclick="event.stopPropagation();showToast('Retry queued — check back in a moment')">Retry</button>
+                </td>
+              </tr>
+              <tr onclick="openJournalDrawer('JNL-0004')">
+                <td class="mono">JNL-20260531-0004</td>
+                <td class="mono">TXN-00422</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.cable-tv</span></td>
+                <td class="amt">₦4,200.00</td>
+                <td class="dim">consumer-app</td>
+                <td><span class="chip asset">A1050</span></td>
+                <td><span class="chip income">I4010</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openJournalDrawer('JNL-0004')">View</button></td>
+              </tr>
+              <tr onclick="openJournalDrawer('JNL-0005')">
+                <td class="mono">JNL-20260531-0005</td>
+                <td class="mono">TXN-00423</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">collection.pos</span></td>
+                <td class="amt">₦8,500.00</td>
+                <td class="dim">pos-network</td>
+                <td><span class="chip suspense">X9999</span></td>
+                <td class="dim">—</td>
+                <td><span class="badge unmapped"><span class="badge-dot"></span>Unmapped</span></td>
+                <td><button class="btn-link primary" onclick="event.stopPropagation();goToMappingRules()">Assign
+                    Rule</button></td>
+              </tr>
+              <tr onclick="openJournalDrawer('JNL-0006')">
+                <td class="mono">JNL-20260531-0006</td>
+                <td class="mono">TXN-00424</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">payment.data</span></td>
+                <td class="amt">₦1,000.00</td>
+                <td class="dim">consumer-app</td>
+                <td><span class="chip asset">A1050</span></td>
+                <td><span class="chip income">I4010</span></td>
+                <td><span class="badge posted"><span class="badge-dot"></span>Posted</span></td>
+                <td><button class="btn-link primary"
+                    onclick="event.stopPropagation();openJournalDrawer('JNL-0006')">View</button></td>
+              </tr>
+              <tr onclick="openJournalDrawer('JNL-0007')">
+                <td class="mono">JNL-20260531-0007</td>
+                <td class="mono">TXN-00427</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">loan.disbursement</span></td>
+                <td class="amt">₦200,000.00</td>
+                <td class="dim">consumer-app</td>
+                <td><span class="chip asset">A1020</span></td>
+                <td><span class="chip liability">L2010</span></td>
+                <td><span class="badge retry-exhausted"><span class="badge-dot"></span>Retry exhausted</span></td>
+                <td><button class="btn-link danger"
+                    onclick="event.stopPropagation();showToast('Retry queued — 5 previous attempts failed')">Retry</button>
+                </td>
+              </tr>
+              <tr onclick="openJournalDrawer('JNL-0008')">
+                <td class="mono">JNL-20260531-0008</td>
+                <td class="mono">TXN-00426</td>
+                <td>31 May 2026</td>
+                <td><span class="type-tag">agency.cash-in</span></td>
+                <td class="amt">₦50,000.00</td>
+                <td class="dim">agency-banking</td>
+                <td><span class="chip suspense">X9999</span></td>
+                <td class="dim">—</td>
+                <td><span class="badge unmapped"><span class="badge-dot"></span>Unmapped</span></td>
+                <td><button class="btn-link primary" onclick="event.stopPropagation();goToMappingRules()">Assign
+                    Rule</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─────────────────── SETTINGS ─────────────────── -->
+      <section class="screen" id="screen-settings">
+        <div class="page-header">
+          <div>
+            <h1>Settings</h1>
+            <p>Adapters, chart of accounts, users, and engine configuration</p>
+          </div>
+        </div>
+
+        <div class="settings-layout">
+          <aside class="settings-sidebar">
+            <div class="settings-sidebar-label">Configuration</div>
+            <button class="settings-nav-btn active" onclick="switchSettingsTab('adapters',this)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <rect x="1" y="4" width="14" height="8" rx="1.5" />
+                <line x1="5" y1="4" x2="5" y2="12" />
+                <circle cx="9" cy="8" r="1" />
+              </svg>
+              Adapters
+            </button>
+            <button class="settings-nav-btn" onclick="switchSettingsTab('coa',this)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <rect x="2" y="2" width="12" height="12" rx="1.5" />
+                <line x1="5" y1="5.5" x2="11" y2="5.5" />
+                <line x1="5" y1="8" x2="11" y2="8" />
+                <line x1="5" y1="10.5" x2="9" y2="10.5" />
+              </svg>
+              COA Reference
+            </button>
+            <button class="settings-nav-btn" onclick="switchSettingsTab('schema',this)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M4 2.5h6l2 2v9H4z" />
+                <path d="M10 2.5v2h2" />
+                <path d="M6.5 7h3" />
+                <path d="M6.5 9.5h3" />
+                <path d="M6.5 12h2" />
+              </svg>
+              Schema &amp; Types
+            </button>
+            <button class="settings-nav-btn" onclick="switchSettingsTab('users',this)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <circle cx="8" cy="5.5" r="2.5" />
+                <path d="M2 13.5c0-2.76 2.69-5 6-5s6 2.24 6 5" />
+              </svg>
+              Users
+            </button>
+            <button class="settings-nav-btn" onclick="switchSettingsTab('system',this)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M13.5 8A5.5 5.5 0 112 8M13.5 8V5M13.5 8H10.5" />
+              </svg>
+              System
+            </button>
+          </aside>
+
+          <div class="settings-content">
+
+            <!-- ADAPTERS -->
+            <div class="settings-panel active" id="settings-adapters">
+              <h2>Adapters</h2>
+              <p class="panel-desc">Registered inbound and outbound adapters. All adapters are stateless — deduplication
+                is handled by the engine using <code
+                  style="font-family:var(--mono);font-size:12px;background:var(--color-muted-bg);padding:1px 4px;border-radius:3px">source_id</code>.
+              </p>
+
+              <div class="section-group-label">Inbound</div>
+              <div class="adapter-list" style="margin-bottom:var(--s8)">
+                <div class="adapter-card">
+                  <div class="adapter-card-top">
+                    <div class="adapter-meta">
+                      <div class="adapter-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="2" y="5" width="20" height="14" rx="2" />
+                          <line x1="2" y1="10" x2="22" y2="10" />
+                        </svg></div>
+                      <div>
+                        <div class="adapter-name">paystack-webhook</div>
+                        <div class="adapter-desc">Receives charge.success and transfer events from Paystack · Inbound ·
+                          Webhook</div>
+                        <div class="adapter-sub">
+                          <span class="badge healthy"><span class="badge-dot"></span>Healthy</span>
+                          <span>·</span><span>84ms latency</span>
+                          <span>·</span><span>Last run: 2m ago</span>
+                          <span>·</span><span>v1.0.0</span>
+                          <span>·</span><span>Modes: webhook</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="adapter-controls">
+                      <button class="btn btn-secondary btn-sm"
+                        onclick="openAdapterConfig('paystack-webhook')">Configure</button>
+                      <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span><span
+                          class="toggle-thumb"></span></label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="adapter-card">
+                  <div class="adapter-card-top">
+                    <div class="adapter-meta">
+                      <div class="adapter-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                        </svg></div>
+                      <div>
+                        <div class="adapter-name">flutterwave-webhook</div>
+                        <div class="adapter-desc">Receives charge.completed and transfer events from Flutterwave ·
+                          Inbound · Webhook</div>
+                        <div class="adapter-sub">
+                          <span class="badge healthy"><span class="badge-dot"></span>Healthy</span>
+                          <span>·</span><span>112ms latency</span>
+                          <span>·</span><span>Last run: 5m ago</span>
+                          <span>·</span><span>v1.0.0</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="adapter-controls">
+                      <button class="btn btn-secondary btn-sm"
+                        onclick="openAdapterConfig('flutterwave-webhook')">Configure</button>
+                      <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span><span
+                          class="toggle-thumb"></span></label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="adapter-card" style="border-color:var(--color-error-ring)">
+                  <div class="adapter-card-top">
+                    <div class="adapter-meta">
+                      <div class="adapter-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                          <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                          <circle cx="12" cy="20" r="1" fill="currentColor" />
+                        </svg></div>
+                      <div>
+                        <div class="adapter-name">mpesa-poll</div>
+                        <div class="adapter-desc">Polls Safaricom Daraja API for M-Pesa transactions (Kenya) · Inbound ·
+                          Poll</div>
+                        <div class="adapter-sub">
+                          <span class="badge adapter-error"><span class="badge-dot"></span>Error</span>
+                          <span>·</span><span>Last attempted: 47m ago</span>
+                          <span>·</span><span>v1.0.0</span>
+                          <span>·</span><span>Modes: poll</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="adapter-controls">
+                      <button class="btn btn-secondary btn-sm"
+                        onclick="openAdapterConfig('mpesa-poll')">Configure</button>
+                      <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span><span
+                          class="toggle-thumb"></span></label>
+                    </div>
+                  </div>
+                  <div class="adapter-error-notice">SOURCE_UNREACHABLE — Safaricom Daraja API returned 503. Next retry
+                    in 8 minutes.</div>
+                </div>
+
+                <div class="adapter-card">
+                  <div class="adapter-card-top">
+                    <div class="adapter-meta">
+                      <div class="adapter-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                          <line x1="16" y1="13" x2="8" y2="13" />
+                          <line x1="16" y1="17" x2="8" y2="17" />
+                        </svg></div>
+                      <div>
+                        <div class="adapter-name">csv-import</div>
+                        <div class="adapter-desc">Accepts CSV/XLSX file uploads · Inbound · File import</div>
+                        <div class="adapter-sub">
+                          <span class="badge healthy"><span class="badge-dot"></span>Healthy</span>
+                          <span>·</span><span>Last used: 3h ago · 1,204 records</span>
+                          <span>·</span><span>v1.0.0</span>
+                          <span>·</span><span>Modes: file-import</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="adapter-controls">
+                      <button class="btn btn-secondary btn-sm"
+                        onclick="openAdapterConfig('csv-import')">Configure</button>
+                      <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span><span
+                          class="toggle-thumb"></span></label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section-group-label">Outbound</div>
+              <p class="outbound-desc">Outbound adapters receive batched journal entries from the engine and post them
+                to your accounting system. Configure credentials and posting behaviour below.</p>
+              <div class="adapter-list">
+                <div class="adapter-card">
+                  <div class="adapter-card-top">
+                    <div class="adapter-meta">
+                      <div class="adapter-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <line x1="18" y1="20" x2="18" y2="10" />
+                          <line x1="12" y1="20" x2="12" y2="4" />
+                          <line x1="6" y1="20" x2="6" y2="14" />
+                          <line x1="2" y1="20" x2="22" y2="20" />
+                        </svg></div>
+                      <div>
+                        <div class="adapter-name">zoho-books</div>
+                        <div class="adapter-desc">Posts journal entries to Zoho Books via Manual Journals API (OAuth
+                          2.0) · Outbound</div>
+                        <div class="adapter-sub">
+                          <span class="badge healthy"><span class="badge-dot"></span>Healthy</span>
+                          <span>·</span><span>203ms latency</span>
+                          <span>·</span><span>Last run: 2m ago · 2,847 entries posted</span>
+                          <span>·</span><span>v1.0.0</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="adapter-controls">
+                      <button class="btn btn-secondary btn-sm"
+                        onclick="openAdapterConfig('zoho-books')">Configure</button>
+                      <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span><span
+                          class="toggle-thumb"></span></label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- COA REFERENCE -->
+            <div class="settings-panel" id="settings-coa">
+              <h2>COA Reference</h2>
+              <p class="panel-desc">Account codes from your accounting system used in mapping rules. Read-only within
+                Ledgerise — manage accounts in your accounting system directly.</p>
+
+              <div class="coa-import-strip">
+                <div class="coa-import-strip-info">
+                  <div class="coa-import-strip-title">Import from CSV</div>
+                  <div class="coa-import-strip-desc">Upload a CSV with columns: Code, Account Name, Type, Currency.
+                    Works with any accounting system.</div>
+                </div>
+                <div class="coa-import-strip-actions">
+                  <button class="btn btn-secondary btn-sm" onclick="showToast('Download COA CSV template')">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                      stroke-linejoin="round">
+                      <path d="M8 2v8M5 7l3 3 3-3" />
+                      <path d="M2 12h12" />
+                    </svg>
+                    Template
+                  </button>
+                  <button class="btn btn-primary btn-sm" onclick="showToast('COA import coming soon')">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                      stroke-linejoin="round">
+                      <path d="M8 10V2M5 5l3-3 3 3" />
+                      <path d="M2 12h12" />
+                    </svg>
+                    Import CSV
+                  </button>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s4)">
+                <div style="font-size:var(--text-xs);color:var(--color-text-3)">Synced from <strong
+                    style="color:var(--color-text-2)">zoho-books</strong> · Last synced: 14:03 UTC</div>
+                <button class="btn btn-secondary btn-sm" onclick="showToast('Syncing from zoho-books…')">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <path d="M13.5 8A5.5 5.5 0 112 8M13.5 8V5M13.5 8H10.5" />
+                  </svg>
+                  Sync Now
+                </button>
+              </div>
+              <div class="table-card">
+                <table class="tbl">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Account Name</th>
+                      <th>Sub-category</th>
+                      <th>Type</th>
+                      <th>Currency</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="mono" colspan="6"
+                        style="background:var(--color-muted-bg);font-weight:600;font-size:11px;color:var(--color-text-2);text-transform:uppercase;letter-spacing:.04em">
+                        1 — Assets</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">100001</td>
+                      <td>Main Cash Account</td>
+                      <td class="dim">Cash &amp; Bank</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">100020</td>
+                      <td>BNK — Globus Bank</td>
+                      <td class="dim">Cash &amp; Bank</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">100021</td>
+                      <td>BNK — Fidelity Bank</td>
+                      <td class="dim">Cash &amp; Bank</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">100024</td>
+                      <td>BNK — GTBank</td>
+                      <td class="dim">Cash &amp; Bank</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">101050</td>
+                      <td>VTPass Prepaid Float Balance</td>
+                      <td class="dim">Aggregator Floats</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">101060</td>
+                      <td>BuyPower Prepaid Float Balance</td>
+                      <td class="dim">Aggregator Floats</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">101070</td>
+                      <td>Interswitch Aggregator Float Balance</td>
+                      <td class="dim">Aggregator Floats</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">101080</td>
+                      <td>Agent Cash Float — AirPay</td>
+                      <td class="dim">Aggregator Floats</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">110010</td>
+                      <td>COST — POS Terminals</td>
+                      <td class="dim">Fixed Assets</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">130010</td>
+                      <td>COST — Software (Proprietary &amp; Licensed)</td>
+                      <td class="dim">Intangibles</td>
+                      <td><span class="chip asset">Asset</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">199999</td>
+                      <td>Suspense / Clearing Account</td>
+                      <td class="dim">Suspense</td>
+                      <td><span class="chip suspense">Suspense</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono" colspan="6"
+                        style="background:var(--color-muted-bg);font-weight:600;font-size:11px;color:var(--color-text-2);text-transform:uppercase;letter-spacing:.04em">
+                        2 — Liabilities</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">200010</td>
+                      <td>Payable — Biller Settlement Pool</td>
+                      <td class="dim">Trade Payables</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">200020</td>
+                      <td>Payable — VTPass</td>
+                      <td class="dim">Trade Payables</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">200030</td>
+                      <td>Payable — BuyPower</td>
+                      <td class="dim">Trade Payables</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">200090</td>
+                      <td>Payable — AirGate Merchant Settlement</td>
+                      <td class="dim">Trade Payables</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">201010</td>
+                      <td>Customer Wallet Balances Payable (AirVend)</td>
+                      <td class="dim">Wallet Liabilities</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">201020</td>
+                      <td>Merchant Wallet Balances Payable (Seamless API)</td>
+                      <td class="dim">Wallet Liabilities</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">202010</td>
+                      <td>Accrued Salaries &amp; Allowances</td>
+                      <td class="dim">Accruals</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">203010</td>
+                      <td>Pay-As-You-Earn (PAYE) Payable</td>
+                      <td class="dim">Tax</td>
+                      <td><span class="chip liability">Liability</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono" colspan="6"
+                        style="background:var(--color-muted-bg);font-weight:600;font-size:11px;color:var(--color-text-2);text-transform:uppercase;letter-spacing:.04em">
+                        4 — Income (Revenue)</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">410010</td>
+                      <td>AirVend | MTN — Airtime &amp; Data</td>
+                      <td class="dim">AirVend Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">410020</td>
+                      <td>AirVend | GLO — Airtime &amp; Data</td>
+                      <td class="dim">AirVend Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">410030</td>
+                      <td>AirVend | Airtel — Airtime &amp; Data</td>
+                      <td class="dim">AirVend Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">410050</td>
+                      <td>AirVend | AEDC — Electricity</td>
+                      <td class="dim">AirVend Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">410060</td>
+                      <td>AirVend | EEDC — Electricity</td>
+                      <td class="dim">AirVend Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">410080</td>
+                      <td>AirVend | Cable TV (DSTV / GOtv / Startimes)</td>
+                      <td class="dim">AirVend Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">410090</td>
+                      <td>AirVend | Water Bills</td>
+                      <td class="dim">AirVend Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">450010</td>
+                      <td>AirPay | POS Transaction MDR</td>
+                      <td class="dim">AirPay Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">450020</td>
+                      <td>AirPay | Agent Cash-In Fees</td>
+                      <td class="dim">AirPay Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">450030</td>
+                      <td>AirPay | Agent Cash-Out Fees</td>
+                      <td class="dim">AirPay Revenue</td>
+                      <td><span class="chip income">Income</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono" colspan="6"
+                        style="background:var(--color-muted-bg);font-weight:600;font-size:11px;color:var(--color-text-2);text-transform:uppercase;letter-spacing:.04em">
+                        5 — Cost of Sales</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">510010</td>
+                      <td>COS | VTPass — Aggregator Transaction Cost</td>
+                      <td class="dim">Aggregator Costs</td>
+                      <td><span class="chip expense">Expense</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">510020</td>
+                      <td>COS | BuyPower — Aggregator Transaction Cost</td>
+                      <td class="dim">Aggregator Costs</td>
+                      <td><span class="chip expense">Expense</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">510030</td>
+                      <td>COS | Interswitch — Aggregator Transaction Cost</td>
+                      <td class="dim">Aggregator Costs</td>
+                      <td><span class="chip expense">Expense</span></td>
+                      <td class="dim">NGN</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- SCHEMA & TYPES -->
+            <div class="settings-panel" id="settings-schema">
+              <h2>Schema &amp; Types</h2>
+              <p class="panel-desc">Operator-facing reference for the canonical transaction record. These fields are
+                produced by inbound adapters and consumed by the journal engine.</p>
+
+              <div class="schema-flow">
+                <div class="schema-flow-step">
+                  <span class="schema-flow-num">1</span>
+                  <div>
+                    <strong>Raw source event</strong>
+                    <span>Webhook, poll result, file row, or manual entry</span>
+                  </div>
+                </div>
+                <div class="schema-flow-arrow">→</div>
+                <div class="schema-flow-step">
+                  <span class="schema-flow-num">2</span>
+                  <div>
+                    <strong>Inbound adapter</strong>
+                    <span>Validates, masks PII, converts amounts, normalizes fields</span>
+                  </div>
+                </div>
+                <div class="schema-flow-arrow">→</div>
+                <div class="schema-flow-step">
+                  <span class="schema-flow-num">3</span>
+                  <div>
+                    <strong>Canonical record</strong>
+                    <span>Single stable format for mapping and journal generation</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="schema-reference-grid">
+                <section class="schema-card">
+                  <div class="schema-card-title">Posting Rules</div>
+                  <div class="schema-rule-list">
+                    <div><span class="chip income">Posted</span> Only <code>settled</code> records with
+                      <code>settled_at</code> can become journal entries.</div>
+                    <div><span class="chip expense">Blocked</span> <code>failed</code>, <code>pending</code>, and
+                      <code>disputed</code> records are stored but not posted.</div>
+                    <div><span class="chip suspense">Review</span> No matching mapping rule means suspense/unmapped, never
+                      silent dropping.</div>
+                    <div><span class="chip asset">Reversal</span> <code>reversed</code> records mirror the original posted
+                      journal when <code>reversal_of</code> is present.</div>
+                  </div>
+                </section>
+
+                <section class="schema-card">
+                  <div class="schema-card-title">Mapping Priority</div>
+                  <ol class="schema-ordered-list">
+                    <li><code>product.line</code> + <code>product.biller</code></li>
+                    <li><code>product.line</code> + <code>product.biller_category</code></li>
+                    <li><code>product.line</code> catch-all</li>
+                    <li>Suspense account if no rule matches</li>
+                  </ol>
+                </section>
+              </div>
+
+              <div class="section-group-label">Canonical Fields</div>
+              <div class="table-card" style="margin-bottom:var(--s6)">
+                <table class="tbl schema-table">
+                  <thead>
+                    <tr>
+                      <th>Field</th>
+                      <th>Meaning</th>
+                      <th>Required</th>
+                      <th>Used For</th>
+                      <th>Example</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="mono">id</td>
+                      <td>Ledgerise-generated UUID for the normalized record.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Internal identity</td>
+                      <td class="mono">9f7a...c22</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">source_id</td>
+                      <td>Original provider reference, when available.</td>
+                      <td><span class="badge auditor-role">No</span></td>
+                      <td>Deduplication and audit trail</td>
+                      <td class="mono">PSK_839104</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">source</td>
+                      <td>Adapter, source system, and live/test environment.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Traceability and test blocking</td>
+                      <td class="mono">paystack / live</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">status</td>
+                      <td>Settlement state: pending, settled, failed, reversed, disputed.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Posting eligibility</td>
+                      <td class="mono">settled</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">type</td>
+                      <td>Business category of the transaction using dot notation.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Mapping context and reporting</td>
+                      <td class="mono">payment.electricity</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">direction</td>
+                      <td>Money movement from the operator perspective.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Journal line direction</td>
+                      <td class="mono">debit</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">amount</td>
+                      <td>Positive amount in the smallest currency unit.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Journal value</td>
+                      <td class="mono">500000</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">currency</td>
+                      <td>ISO 4217 three-letter currency code.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Accounting currency</td>
+                      <td class="mono">NGN</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">product</td>
+                      <td>Product line, biller, and biller category.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Primary mapping lookup</td>
+                      <td class="mono">consumer-app / ikeja-electric</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">principal</td>
+                      <td>Customer, merchant, agent, or internal actor. PII must be masked.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Audit trail</td>
+                      <td class="mono">customer / ***4821</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">fee</td>
+                      <td>Platform fee, processing fee, and net fee when present.</td>
+                      <td><span class="badge auditor-role">No</span></td>
+                      <td>Revenue/cost splits</td>
+                      <td class="mono">platform_fee: 5000</td>
+                    </tr>
+                    <tr>
+                      <td class="mono">metadata</td>
+                      <td>Source-specific extra fields that do not affect mapping.</td>
+                      <td><span class="badge healthy">Yes</span></td>
+                      <td>Debugging and audit context</td>
+                      <td class="mono">terminal_id: POS-17</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="section-group-label">Adapter Modes</div>
+              <div class="schema-mode-grid">
+                <div class="schema-mode-card">
+                  <div class="schema-mode-title">Webhook</div>
+                  <p>Source system pushes each event to Ledgerise. Best for payment processors that support reliable
+                    event callbacks.</p>
+                  <span class="type-tag">paystack-webhook</span>
+                </div>
+                <div class="schema-mode-card">
+                  <div class="schema-mode-title">Poll</div>
+                  <p>Ledgerise calls the source API on a schedule using a cursor such as last fetched time or source ID.
+                    Best when the provider does not push events.</p>
+                  <span class="type-tag">mpesa-poll</span>
+                </div>
+                <div class="schema-mode-card">
+                  <div class="schema-mode-title">File Import</div>
+                  <p>Operator uploads CSV/XLSX exports. Useful for onboarding, backfills, banks, and providers without an
+                    API.</p>
+                  <span class="type-tag">csv-import</span>
+                </div>
+                <div class="schema-mode-card">
+                  <div class="schema-mode-title">Manual Entry</div>
+                  <p>Structured one-off entry for exceptions. Stored through the same canonical schema but not a
+                    replacement for automation.</p>
+                  <span class="type-tag">manual-entry</span>
+                </div>
+              </div>
+
+              <div class="section-group-label" style="margin-top:var(--s6)">Transaction Type Library</div>
+              <div class="schema-type-grid">
+                <div class="schema-type-card">
+                  <div class="schema-type-title">Payments</div>
+                  <div class="schema-type-list">
+                    <span>payment.airtime</span><span>payment.data</span><span>payment.electricity</span>
+                    <span>payment.cable-tv</span><span>payment.internet</span><span>payment.merchant</span>
+                  </div>
+                </div>
+                <div class="schema-type-card">
+                  <div class="schema-type-title">Transfers &amp; Collections</div>
+                  <div class="schema-type-list">
+                    <span>transfer.wallet-to-bank</span><span>transfer.bank-to-wallet</span><span>collection.pos</span>
+                    <span>collection.web</span><span>collection.ussd</span><span>collection.bank-transfer</span>
+                  </div>
+                </div>
+                <div class="schema-type-card">
+                  <div class="schema-type-title">Fees, FX &amp; Cards</div>
+                  <div class="schema-type-list">
+                    <span>fee.platform</span><span>fee.processing</span><span>fx.conversion</span>
+                    <span>fx.gain</span><span>card.spend</span><span>card.chargeback</span>
+                  </div>
+                </div>
+                <div class="schema-type-card">
+                  <div class="schema-type-title">Lending, Savings &amp; Agency</div>
+                  <div class="schema-type-list">
+                    <span>loan.disbursement</span><span>loan.repayment.interest</span><span>savings.deposit</span>
+                    <span>investment.purchase</span><span>agency.cash-in</span><span>agency.commission</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="schema-note">
+                Custom types are allowed when they use dot notation, for example <code>payment.toll</code> or
+                <code>agency.crop-insurance</code>. A matching mapping rule must exist or the transaction is held as
+                unmapped.
+              </div>
+            </div>
+
+            <!-- USERS -->
+            <div class="settings-panel" id="settings-users">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s6)">
+                <div>
+                  <h2>Users</h2>
+                  <p class="panel-desc" style="margin-bottom:0">Manage team access. Finance Officers can manage rules
+                    and view journals. Auditors have read-only access.</p>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="openInviteUser()">Invite User</button>
+              </div>
+              <div class="table-card">
+                <table class="tbl">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Role</th>
+                      <th>Last Login</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><span style="font-weight:500">Kene Ohiaeri</span></td>
+                      <td class="dim">keneohiaeri@gmail.com</td>
+                      <td><span class="badge admin-role">Admin</span></td>
+                      <td class="dim">Just now</td>
+                      <td class="dim" style="font-size:var(--text-xs)">You</td>
+                    </tr>
+                    <tr>
+                      <td><span style="font-weight:500">Amara Obi</span></td>
+                      <td class="dim">amara@vtpass.ng</td>
+                      <td><span class="badge finance-role">Finance</span></td>
+                      <td class="dim">1h ago</td>
+                      <td><button class="btn-link primary" onclick="openEditRole(this)">Edit role</button></td>
+                    </tr>
+                    <tr>
+                      <td><span style="font-weight:500">Tunde Adeyemi</span></td>
+                      <td class="dim">tunde@vtpass.ng</td>
+                      <td><span class="badge finance-role">Finance</span></td>
+                      <td class="dim">3h ago</td>
+                      <td><button class="btn-link primary" onclick="openEditRole(this)">Edit role</button></td>
+                    </tr>
+                    <tr>
+                      <td><span style="font-weight:500">Chidi Eze</span></td>
+                      <td class="dim">chidi@external-audit.ng</td>
+                      <td><span class="badge auditor-role">Auditor</span></td>
+                      <td class="dim">2d ago</td>
+                      <td><button class="btn-link primary" onclick="openEditRole(this)">Edit role</button></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div
+                style="margin-top:var(--s5);padding:var(--s4);background:var(--color-muted-bg);border-radius:var(--r-lg)">
+                <p style="font-size:var(--text-xs);color:var(--color-text-2);line-height:1.6">
+                  <strong>Admin:</strong> Full access to all sections and settings.<br>
+                  <strong>Finance:</strong> Full access to Transactions, Mapping Rules, and Journal Log. Read-only on
+                  Settings.<br>
+                  <strong>Auditor:</strong> Read-only access to Transactions and Journal Log. No access to Mapping Rules
+                  or Settings.
+                </p>
+              </div>
+            </div>
+
+            <!-- SYSTEM -->
+            <div class="settings-panel" id="settings-system">
+              <h2>System</h2>
+              <p class="panel-desc">Engine scheduling, batch processing, suspense account, and retry policy</p>
+
+              <div class="config-section">
+                <div class="config-section-title">Journal Engine</div>
+                <div class="config-grid">
+                  <div class="form-field">
+                    <label>Engine Schedule (Cron)</label>
+                    <input type="text" value="0 * * * *">
+                    <div class="hint">Current: runs every hour. Standard cron syntax.</div>
+                  </div>
+                  <div class="form-field">
+                    <label>Batch Size</label>
+                    <input type="number" value="500">
+                    <div class="hint">Max transactions processed per engine run.</div>
+                  </div>
+                  <div class="form-field">
+                    <label>Suspense Account Code</label>
+                    <input type="text" value="X9999">
+                    <div class="hint">COA code where unmapped transactions are parked.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="config-section">
+                <div class="config-section-title">Retry Policy</div>
+                <div class="config-grid">
+                  <div class="form-field">
+                    <label>Max Retry Attempts</label>
+                    <input type="number" value="5">
+                    <div class="hint">After this, entry is marked retry_exhausted and held for manual review.</div>
+                  </div>
+                  <div class="form-field">
+                    <label>Backoff Strategy</label>
+                    <select>
+                      <option selected>Exponential (5m → 15m → 1h → 4h → 24h)</option>
+                      <option>Fixed interval</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:flex;justify-content:flex-end;gap:var(--s2)">
+                <button class="btn btn-secondary">Discard Changes</button>
+                <button class="btn btn-primary" onclick="showToast('System settings saved')">Save Changes</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ══ TX DETAIL DRAWER ══ -->
+  <div class="drawer-overlay" id="tx-overlay" onclick="closeTxDrawer()"></div>
+  <aside class="drawer" id="tx-drawer">
+    <div class="drawer-header">
+      <div class="drawer-hd">
+        <h2>Transaction Detail</h2>
+        <div class="mono-id" id="txd-id"></div>
+      </div>
+      <button class="drawer-close" onclick="closeTxDrawer()">×</button>
+    </div>
+    <div class="drawer-body" id="txd-body"></div>
+    <div class="drawer-footer">
+      <div></div>
+      <button class="btn btn-secondary btn-sm" onclick="closeTxDrawer()">Close</button>
+    </div>
+  </aside>
+
+  <!-- ══ JOURNAL DETAIL DRAWER ══ -->
+  <div class="drawer-overlay" id="journal-overlay" onclick="closeJournalDrawer()"></div>
+  <aside class="drawer" id="journal-drawer">
+    <div class="drawer-header">
+      <div class="drawer-hd">
+        <h2>Journal Entry</h2>
+        <div class="mono-id" id="jd-id"></div>
+      </div>
+      <button class="drawer-close" onclick="closeJournalDrawer()">×</button>
+    </div>
+    <div class="drawer-body" id="jd-body"></div>
+    <div class="drawer-footer">
+      <span class="badge" id="jd-status-badge"></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="closeJournalDrawer()">Close</button>
+        <button class="btn btn-danger btn-sm" id="jd-retry-btn" style="display:none"
+          onclick="showToast('Retry queued');closeJournalDrawer()">Retry Now</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ══ RULE FORM DRAWER ══ -->
+  <div class="drawer-overlay" id="rule-overlay" onclick="closeRuleDrawer()"></div>
+  <aside class="drawer" id="rule-drawer">
+    <div class="drawer-header">
+      <div class="drawer-hd">
+        <h2 id="rd-title">Add Mapping Rule</h2>
+        <div class="mono-id">Configure debit and credit accounts for a transaction pattern</div>
+      </div>
+      <button class="drawer-close" onclick="closeRuleDrawer()">×</button>
+    </div>
+    <div class="drawer-body">
+      <div class="form-field">
+        <label>Product Line <span style="color:var(--color-error)">*</span></label>
+        <select>
+          <option value="">Select product line…</option>
+          <option>consumer-app</option>
+          <option>pos-network</option>
+          <option>ussd-channel</option>
+          <option>api-gateway</option>
+          <option>agency-banking</option>
+        </select>
+        <div class="hint">Primary key for mapping rule resolution. Required.</div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Biller (optional)</label>
+          <input type="text" placeholder="e.g. ikeja-electric">
+          <div class="hint">Exact match. Highest priority.</div>
+        </div>
+        <div class="form-field">
+          <label>Biller Category (optional)</label>
+          <select>
+            <option value="">None</option>
+            <option>electricity</option>
+            <option>airtime</option>
+            <option>data</option>
+            <option>cable-tv</option>
+            <option>internet</option>
+            <option>insurance</option>
+            <option>water</option>
+            <option>education</option>
+            <option>government</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field">
+        <label>Transaction Type Filter (optional)</label>
+        <select>
+          <option value="">All types (catch-all for this product line)</option>
+          <optgroup label="payment">
+            <option>payment.electricity</option>
+            <option>payment.airtime</option>
+            <option>payment.data</option>
+            <option>payment.cable-tv</option>
+            <option>payment.water</option>
+          </optgroup>
+          <optgroup label="transfer">
+            <option>transfer.wallet-to-bank</option>
+            <option>transfer.wallet-to-wallet</option>
+            <option>transfer.bank-to-wallet</option>
+          </optgroup>
+          <optgroup label="collection">
+            <option>collection.pos</option>
+            <option>collection.web</option>
+            <option>collection.mobile</option>
+            <option>collection.ussd</option>
+          </optgroup>
+          <optgroup label="fee">
+            <option>fee.platform</option>
+            <option>fee.processing</option>
+          </optgroup>
+          <optgroup label="loan">
+            <option>loan.disbursement</option>
+            <option>loan.repayment.principal</option>
+          </optgroup>
+          <optgroup label="agency">
+            <option>agency.cash-in</option>
+            <option>agency.cash-out</option>
+            <option>agency.commission</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="form-section-label">Rule Type</div>
+
+      <div class="form-field">
+        <div class="rule-type-toggle">
+          <label class="rule-type-option">
+            <input type="radio" name="rule-type" value="simple" checked onchange="setRuleType('simple')">
+            <div class="rtype-label">Simple</div>
+            <div class="rtype-desc">One journal entry per transaction</div>
+          </label>
+          <label class="rule-type-option">
+            <input type="radio" name="rule-type" value="compound" onchange="setRuleType('compound')">
+            <div class="rtype-label">Compound</div>
+            <div class="rtype-desc">Multiple journal entries from one transaction</div>
+          </label>
+        </div>
+        <div class="hint" style="margin-top:var(--s2)">Use Compound for multi-leg flows, e.g. wallet purchase through an
+          aggregator generates separate debit, token, and settlement entries.</div>
+      </div>
+
+      <!-- Simple mode -->
+      <div id="simple-accounts">
+        <div class="form-section-label">Accounts</div>
+        <div class="form-field">
+          <label>Debit Account <span style="color:var(--color-error)">*</span></label>
+          <select>
+            <option value="">Select account…</option>
+            <optgroup label="Assets">
+              <option>A1010 — Cash &amp; Equivalents</option>
+              <option>A1020 — Loans Receivable</option>
+              <option>A1050 — Float — BuyPower</option>
+              <option>A1060 — Float — POS Terminals</option>
+            </optgroup>
+            <optgroup label="Liabilities">
+              <option>L2010 — Customer Wallets</option>
+              <option>L2020 — Merchant Payables</option>
+              <option>L2030 — Collected Revenue Clearing</option>
+            </optgroup>
+            <optgroup label="Income">
+              <option>I4010 — Revenue — Bill Payments</option>
+              <option>I4020 — Revenue — Transfer Fees</option>
+              <option>I4030 — Revenue — Platform Fees</option>
+            </optgroup>
+            <optgroup label="Expense">
+              <option>E5010 — Processing Fees — BuyPower</option>
+            </optgroup>
+            <optgroup label="Suspense">
+              <option>X9999 — Suspense</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Credit Account(s) <span style="color:var(--color-error)">*</span></label>
+          <div id="credit-rows">
+            <div class="credit-row">
+              <select style="flex:1">
+                <option value="">Select account…</option>
+                <optgroup label="Assets">
+                  <option>A1010 — Cash &amp; Equivalents</option>
+                  <option>A1050 — Float — BuyPower</option>
+                </optgroup>
+                <optgroup label="Liabilities">
+                  <option>L2010 — Customer Wallets</option>
+                  <option>L2020 — Merchant Payables</option>
+                </optgroup>
+                <optgroup label="Income">
+                  <option>I4010 — Revenue — Bill Payments</option>
+                  <option>I4020 — Revenue — Transfer Fees</option>
+                  <option>I4030 — Revenue — Platform Fees</option>
+                </optgroup>
+              </select>
+              <input type="number" placeholder="%" min="1" max="100" value="100" style="width:64px">
+              <button class="btn btn-ghost btn-sm" onclick="addCreditRow()">+</button>
+            </div>
+          </div>
+          <div class="hint">Percentages must sum to 100.</div>
+        </div>
+      </div>
+
+      <!-- Compound mode -->
+      <div id="compound-accounts" style="display:none">
+        <div class="form-section-label">Journal Entries</div>
+        <div class="hint" style="margin-bottom:var(--s3)">Each entry must balance (DR = CR). All entries are generated
+          from the single matched transaction.</div>
+        <div class="compound-entries" id="compound-entries">
+          <div class="compound-entry">
+            <div class="compound-entry-header"><span class="compound-entry-num">Entry 1</span></div>
+            <div class="form-field"><label>Label (optional)</label><input type="text" placeholder="e.g. Wallet debit">
+            </div>
+            <div class="form-field"><label>Debit Account <span style="color:var(--color-error)">*</span></label><select>
+                <option value="">Select account…</option>
+                <optgroup label="Assets">
+                  <option>A1010 — Cash &amp; Equivalents</option>
+                  <option>A1050 — Float — BuyPower</option>
+                </optgroup>
+                <optgroup label="Liabilities">
+                  <option>L2010 — Customer Wallets</option>
+                  <option>L2030 — Collected Revenue Clearing</option>
+                </optgroup>
+                <optgroup label="Income">
+                  <option>I4010 — Revenue — Bill Payments</option>
+                </optgroup>
+                <optgroup label="Suspense">
+                  <option>X9999 — Suspense</option>
+                </optgroup>
+              </select></div>
+            <div class="form-field" style="margin-bottom:0"><label>Credit Account <span
+                  style="color:var(--color-error)">*</span></label>
+              <div class="credit-row"><select style="flex:1">
+                  <option value="">Select account…</option>
+                  <optgroup label="Assets">
+                    <option>A1010 — Cash &amp; Equivalents</option>
+                    <option>A1050 — Float — BuyPower</option>
+                  </optgroup>
+                  <optgroup label="Liabilities">
+                    <option>L2010 — Customer Wallets</option>
+                    <option>L2030 — Collected Revenue Clearing</option>
+                  </optgroup>
+                  <optgroup label="Income">
+                    <option>I4010 — Revenue — Bill Payments</option>
+                  </optgroup>
+                </select><input type="number" placeholder="%" value="100" style="width:64px"><button
+                  class="btn btn-ghost btn-sm" onclick="addCompoundCreditRow(this)">+</button></div>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:var(--s3)" onclick="addCompoundEntry()">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="8" y1="2" x2="8" y2="14" />
+            <line x1="2" y1="8" x2="14" y2="8" />
+          </svg>
+          Add journal entry
+        </button>
+      </div>
+
+      <div class="form-field">
+        <label>Description</label>
+        <textarea placeholder="Optional — describe what this rule covers and why…"></textarea>
+      </div>
+
+      <div class="form-field">
+        <label>Status</label>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+          <label class="toggle">
+            <input type="checkbox" checked>
+            <span class="toggle-track"></span><span class="toggle-thumb"></span>
+          </label>
+          <span style="font-size:var(--text-sm);font-weight:500">Active — engine will apply this rule immediately</span>
+        </div>
+      </div>
+    </div>
+    <div class="drawer-footer">
+      <button class="btn btn-ghost" onclick="closeRuleDrawer()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRule()">Save Rule</button>
+    </div>
+  </aside>
+
+  <!-- ══ ADAPTER CONFIGURE DRAWER ══ -->
+  <div class="drawer-overlay" id="ac-overlay" onclick="closeAdapterConfig()"></div>
+  <aside class="drawer" id="ac-drawer">
+    <div class="drawer-header">
+      <div class="drawer-hd">
+        <h2 id="ac-title">Configure Adapter</h2>
+        <div class="mono-id" id="ac-subtitle"></div>
+      </div>
+      <button class="drawer-close" onclick="closeAdapterConfig()">×</button>
+    </div>
+    <div class="drawer-body" id="ac-body"></div>
+    <div class="drawer-footer">
+      <button class="btn btn-ghost" onclick="closeAdapterConfig()">Cancel</button>
+      <button class="btn btn-primary" onclick="showToast('Configuration saved');closeAdapterConfig()">Save</button>
+    </div>
+  </aside>
+
+  <!-- ══ EDIT ROLE MODAL ══ -->
+  <div class="modal-overlay" id="edit-role-modal" onclick="cancelEditRole(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>Edit Role</h3>
+      </div>
+      <div class="modal-body">
+        <p id="edit-role-desc" style="margin-bottom:var(--s4)"></p>
+        <div class="form-field" style="margin-bottom:0">
+          <label>Role</label>
+          <select id="edit-role-select">
+            <option value="admin">Admin — full access to all sections and settings</option>
+            <option value="finance">Finance — full access except Settings (read-only)</option>
+            <option value="auditor">Auditor — read-only on Transactions and Journal Log</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="cancelEditRole()">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmEditRole()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ INVITE USER DRAWER ══ -->
+  <div class="drawer-overlay" id="invite-overlay" onclick="closeInviteUser()"></div>
+  <aside class="drawer" id="invite-drawer">
+    <div class="drawer-header">
+      <div class="drawer-hd">
+        <h2>Invite User</h2>
+        <div class="mono-id">An invitation email will be sent to the address below</div>
+      </div>
+      <button class="drawer-close" onclick="closeInviteUser()">×</button>
+    </div>
+    <div class="drawer-body">
+      <div class="form-field">
+        <label>Email address <span style="color:var(--color-error)">*</span></label>
+        <input type="email" placeholder="colleague@example.com">
+      </div>
+      <div class="form-field">
+        <label>Name (optional)</label>
+        <input type="text" placeholder="Full name">
+      </div>
+      <div class="form-field">
+        <label>Role <span style="color:var(--color-error)">*</span></label>
+        <select>
+          <option value="finance">Finance — full access except Settings (read-only)</option>
+          <option value="auditor">Auditor — read-only on Transactions and Journal Log</option>
+          <option value="admin">Admin — full access to all sections and settings</option>
+        </select>
+        <div class="hint">The invited user can be upgraded or downgraded later from this table.</div>
+      </div>
+    </div>
+    <div class="drawer-footer">
+      <button class="btn btn-ghost" onclick="closeInviteUser()">Cancel</button>
+      <button class="btn btn-primary" onclick="showToast('Invitation sent');closeInviteUser()">Send Invitation</button>
+    </div>
+  </aside>
+
+  <!-- ══ TOGGLE CONFIRMATION MODAL ══ -->
+  <div class="modal-overlay" id="toggle-modal" onclick="cancelToggle(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="modal-title">Deactivate rule?</h3>
+      </div>
+      <div class="modal-body">
+        <p id="modal-body-text"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="cancelToggle()">Cancel</button>
+        <button class="btn btn-danger" id="modal-confirm-btn" onclick="confirmToggle()">Deactivate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TOAST ══ -->
+  <div id="toast"></div>
+
+  <script>
+    /* ── NAV ── */
+    document.querySelectorAll('.nav-tab[data-screen]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('screen-' + tab.dataset.screen).classList.add('active');
+      });
+    });
+
+    /* ── TOAST ── */
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.style.transform = 'translateY(0)';
+      t.style.opacity = '1';
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => { t.style.transform = 'translateY(80px)'; t.style.opacity = '0'; }, 2800);
+    }
+
+    /* ── QUICK FILTER TOGGLE ── */
+    function toggleQuickFilter(btn) {
+      const on = btn.classList.toggle('btn-primary');
+      btn.classList.toggle('btn-ghost', !on);
+      const isTx = btn.id === 'btn-unmapped-only';
+      if (isTx) {
+        document.querySelectorAll('#screen-transactions .tbl tbody tr').forEach(row => {
+          row.style.display = on ? (row.querySelector('.badge.unmapped') ? '' : 'none') : '';
+        });
+      } else {
+        document.querySelectorAll('#screen-journal-log .tbl tbody tr').forEach(row => {
+          row.style.display = on ? (row.querySelector('.badge.failed, .badge.unmapped, .badge.retry-exhausted') ? '' : 'none') : '';
+        });
+      }
+    }
+
+    /* ── NAVIGATION HELPER ── */
+    function goToMappingRules() {
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.querySelector('[data-screen="mapping-rules"]').classList.add('active');
+      document.getElementById('screen-mapping-rules').classList.add('active');
+      showToast('Add a rule for pos-network to resolve these transactions');
+    }
+
+    /* ── TX DRAWER ── */
+    const txData = {
+      'TXN-00419': { sourceId: 'TXN-20260531-00419', adapter: 'paystack-webhook', env: 'live', occurred: '31 May · 14:01:54 UTC', settled: '31 May · 14:01:59 UTC', processed: '31 May · 14:02:01 UTC', status: 'settled', type: 'payment.electricity', dir: 'debit', amount: '₦5,000.00', platformFee: '₦100.00', processingFee: '₦70.00', netFee: '₦30.00', productLine: 'consumer-app', biller: 'ikeja-electric', category: 'electricity', channel: 'mobile', principalId: 'usr_0000291', principalRef: '080****4421', aggregator: 'buypower', accountRef: 'AV-BP-001', balBefore: '₦120,000.00', balAfter: '₦115,000.00', jnlId: 'JNL-20260531-0001', jnlKey: 'JNL-0001', jnlStatus: 'posted' },
+      'TXN-00420': { sourceId: 'TXN-20260531-00420', adapter: 'paystack-webhook', env: 'live', occurred: '31 May · 13:55:12 UTC', settled: '31 May · 13:55:17 UTC', processed: '31 May · 13:55:19 UTC', status: 'settled', type: 'payment.airtime', dir: 'debit', amount: '₦200.00', platformFee: '₦5.00', processingFee: '₦3.00', netFee: '₦2.00', productLine: 'consumer-app', biller: 'mtn', category: 'airtime', channel: 'ussd', principalId: 'usr_0000512', principalRef: '081****3310', aggregator: 'buypower', accountRef: 'AV-BP-001', balBefore: '₦85,000.00', balAfter: '₦84,800.00', jnlId: 'JNL-20260531-0002', jnlKey: 'JNL-0002', jnlStatus: 'posted' },
+      'TXN-00421': { sourceId: 'TXN-20260531-00421', adapter: 'paystack-webhook', env: 'live', occurred: '31 May · 13:16:12 UTC', settled: '31 May · 13:16:20 UTC', processed: '31 May · 13:16:22 UTC', status: 'settled', type: 'transfer.wallet-to-bank', dir: 'debit', amount: '₦15,000.00', platformFee: '₦50.00', processingFee: '₦0.00', netFee: '₦50.00', productLine: 'consumer-app', biller: null, category: null, channel: 'api', principalId: 'usr_0001044', principalRef: '***0891', aggregator: null, accountRef: null, balBefore: null, balAfter: null, jnlId: 'JNL-20260531-0003', jnlKey: 'JNL-0003', jnlStatus: 'failed' },
+      'TXN-00423': { sourceId: 'TXN-20260531-00423', adapter: 'flutterwave-webhook', env: 'live', occurred: '31 May · 14:00:33 UTC', settled: '31 May · 14:00:38 UTC', processed: '31 May · 14:00:41 UTC', status: 'settled', type: 'collection.pos', dir: 'credit', amount: '₦8,500.00', platformFee: '₦85.00', processingFee: '₦0.00', netFee: '₦85.00', productLine: 'pos-network', biller: null, category: null, channel: 'pos', principalId: 'mch_0000887', principalRef: '***7742', aggregator: null, accountRef: null, balBefore: null, balAfter: null, jnlId: 'JNL-20260531-0005', jnlKey: 'JNL-0005', jnlStatus: 'unmapped' },
+      'TXN-00424': { sourceId: 'TXN-20260531-00424', adapter: 'paystack-webhook', env: 'live', occurred: '31 May · 13:44:51 UTC', settled: '31 May · 13:44:56 UTC', processed: '31 May · 13:44:58 UTC', status: 'settled', type: 'payment.cable-tv', dir: 'debit', amount: '₦4,200.00', platformFee: '₦100.00', processingFee: '₦60.00', netFee: '₦40.00', productLine: 'consumer-app', biller: 'dstv', category: 'cable-tv', channel: 'mobile', principalId: 'usr_0000778', principalRef: '080****1122', aggregator: 'buypower', accountRef: 'AV-BP-001', balBefore: '₦200,000.00', balAfter: '₦195,800.00', jnlId: 'JNL-20260531-0004', jnlKey: 'JNL-0004', jnlStatus: 'posted' },
+      'TXN-00426': { sourceId: 'TXN-20260531-00426', adapter: 'csv-import', env: 'live', occurred: '31 May · 11:02:44 UTC', settled: '31 May · 11:02:44 UTC', processed: '31 May · 11:30:01 UTC', status: 'settled', type: 'agency.cash-in', dir: 'credit', amount: '₦50,000.00', platformFee: '₦250.00', processingFee: '₦0.00', netFee: '₦250.00', productLine: 'agency-banking', biller: null, category: null, channel: 'agent', principalId: 'agt_0000099', principalRef: '***2290', aggregator: null, accountRef: null, balBefore: null, balAfter: null, jnlId: 'JNL-20260531-0008', jnlKey: 'JNL-0008', jnlStatus: 'unmapped' },
+      'TXN-00430': { sourceId: 'TXN-20260531-00430', adapter: 'paystack-webhook', env: 'live', occurred: '31 May · 14:05:09 UTC', settled: null, processed: '31 May · 14:05:11 UTC', status: 'pending', type: 'payment.water', dir: 'debit', amount: '₦2,500.00', platformFee: '₦50.00', processingFee: '₦0.00', netFee: '₦50.00', productLine: 'consumer-app', biller: 'lawma', category: 'water', channel: 'web', principalId: 'usr_0000390', principalRef: '080****8810', aggregator: 'buypower', accountRef: 'AV-BP-001', balBefore: '₦35,000.00', balAfter: null, jnlId: null, jnlKey: null, jnlStatus: null },
+      'TXN-00431': { sourceId: 'TXN-20260531-00431', adapter: 'paystack-webhook', env: 'live', occurred: '31 May · 11:13:22 UTC', settled: '31 May · 11:13:28 UTC', processed: '31 May · 11:13:30 UTC', status: 'reversed', type: 'transfer.wallet-to-bank', dir: 'debit', amount: '₦75,000.00', platformFee: '₦50.00', processingFee: '₦0.00', netFee: '₦50.00', productLine: 'api-gateway', biller: null, category: null, channel: 'api', principalId: 'usr_0000102', principalRef: '***9201', aggregator: null, accountRef: null, balBefore: null, balAfter: null, jnlId: 'JNL-20260531-0009', jnlKey: 'JNL-0009', jnlStatus: 'posted', isReversal: true },
+      'TXN-00401': { sourceId: 'TEST-20260531-00401', adapter: 'paystack-webhook', env: 'test', occurred: '31 May · 14:01:00 UTC', settled: '31 May · 14:01:02 UTC', processed: '31 May · 14:01:04 UTC', status: 'settled', type: 'payment.electricity', dir: 'debit', amount: '₦100.00', platformFee: '₦0.00', processingFee: '₦0.00', netFee: '₦0.00', productLine: 'consumer-app', biller: 'ikeja-electric', category: 'electricity', channel: 'api', principalId: 'test_usr_001', principalRef: '***0000', aggregator: null, accountRef: null, balBefore: null, balAfter: null, jnlId: null, jnlKey: null, jnlStatus: null },
+    };
+
+    function openTxDrawer(txId) {
+      const d = txData[txId] || txData['TXN-00419'];
+      document.getElementById('txd-id').textContent = txId;
+      const dirBadge = d.dir === 'debit' ? '<span class="dir-badge debit">DR</span>' : '<span class="dir-badge credit">CR</span>';
+      const statusBadge = `<span class="badge ${d.status}"><span class="badge-dot"></span>${d.status.charAt(0).toUpperCase() + d.status.slice(1)}</span>`;
+      const envBadge = d.env === 'test' ? '<span class="badge test-env">Test</span>' : '<span class="badge settled" style="font-size:10px">Live</span>';
+      const floatSection = d.aggregator ? `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Float</div>
+        <div class="drawer-grid">
+          <div class="df"><label>Aggregator</label><span>${d.aggregator}</span></div>
+          <div class="df"><label>Account Ref</label><span class="mono">${d.accountRef}</span></div>
+          <div class="df"><label>Balance Before</label><span>${d.balBefore}</span></div>
+          <div class="df"><label>Balance After</label><span>${d.balAfter || '—'}</span></div>
+        </div>
+      </div>` : '';
+      const jnlSection = d.jnlId ? `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Journal Entry</div>
+        ${d.isReversal ? '<div class="reversal-notice"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8A5.5 5.5 0 112 8M13.5 8V5M13.5 8H10.5"/></svg>This transaction was reversed. The journal entry shown is the reversal entry.</div>' : ''}
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="mono" style="font-size:11px">${d.jnlId}</span>
+          <span class="badge ${d.jnlStatus}"><span class="badge-dot"></span>${d.jnlStatus.charAt(0).toUpperCase() + d.jnlStatus.slice(1)}</span>
+          <button class="btn-link primary" onclick="closeTxDrawer();openJournalDrawer('${d.jnlKey}')">Open entry →</button>
+        </div>
+      </div>` : (d.env === 'test' ? `<div class="drawer-section"><div class="drawer-section-title">Journal Entry</div><span class="badge test-env">Test env — blocked from posting</span></div>` : `<div class="drawer-section"><div class="drawer-section-title">Journal Entry</div><span class="dim" style="font-size:var(--text-xs)">Awaiting settlement before journal is generated</span></div>`);
+      document.getElementById('txd-body').innerHTML = `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Canonical Record</div>
+        <div class="drawer-grid">
+          <div class="df"><label>Ledgerise ID</label><span class="mono">${txId}</span></div>
+          <div class="df"><label>Source ID</label><span class="mono">${d.sourceId}</span></div>
+          <div class="df"><label>Source Adapter</label><span class="mono">${d.adapter}</span></div>
+          <div class="df"><label>Environment</label><span>${envBadge}</span></div>
+          <div class="df"><label>Status</label><span>${statusBadge}</span></div>
+          <div class="df"><label>Occurred At</label><span>${d.occurred}</span></div>
+          <div class="df"><label>Settled At</label><span>${d.settled || '—'}</span></div>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">Transaction</div>
+        <div class="drawer-grid">
+          <div class="df"><label>Type</label><span class="mono">${d.type}</span></div>
+          <div class="df"><label>Direction</label><span>${dirBadge}</span></div>
+          <div class="df"><label>Amount</label><span style="font-weight:700">${d.amount} NGN</span></div>
+          <div class="df"><label>Platform Fee</label><span>${d.platformFee}</span></div>
+          <div class="df"><label>Processing Fee</label><span>${d.processingFee}</span></div>
+          <div class="df"><label>Net Fee</label><span>${d.netFee}</span></div>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">Product &amp; Principal</div>
+        <div class="drawer-grid">
+          <div class="df"><label>Product Line</label><span>${d.productLine}</span></div>
+          <div class="df"><label>Biller</label><span>${d.biller || '—'}</span></div>
+          <div class="df"><label>Category</label><span>${d.category || '—'}</span></div>
+          <div class="df"><label>Channel</label><span><span class="channel-tag">${d.channel}</span></span></div>
+          <div class="df"><label>Principal ID</label><span class="mono">${d.principalId}</span></div>
+          <div class="df"><label>Reference (masked)</label><span class="mono">${d.principalRef}</span></div>
+        </div>
+      </div>
+      ${floatSection}
+      ${jnlSection}`;
+      open('tx-overlay', 'tx-drawer');
+    }
+
+    function closeTxDrawer() { close('tx-overlay', 'tx-drawer'); }
+
+    /* ── JOURNAL DRAWER ── */
+    const journalData = {
+      'JNL-0001': {
+        id: 'JNL-20260531-0001', status: 'posted',
+        txId: 'TXN-00419', date: '31 May 2026', type: 'payment.electricity',
+        amount: '₦5,000.00 NGN', productLine: 'consumer-app', biller: 'ikeja-electric',
+        rule: 'R001 — consumer-app + ikeja-electric × payment.electricity',
+        accountingRef: 'ZB-JNL-20260531-004192', postedAt: '31 May 2026, 14:03:12 UTC',
+        lines: [
+          { type: 'dr', code: 'A1050', name: 'Float — BuyPower', amt: '₦5,000.00' },
+          { type: 'cr', code: 'I4010', name: 'Revenue — Bill Payments', amt: '₦5,000.00' },
+        ],
+        timeline: [
+          { ok: true, event: 'Posted to accounting system', time: '31 May 2026, 14:03:12 UTC' },
+          { ok: true, event: 'Journal entry generated', time: '31 May 2026, 14:03:08 UTC' },
+          { ok: true, event: 'Mapping rule resolved — R001', time: '31 May 2026, 14:03:07 UTC' },
+          { ok: true, event: 'Transaction ingested via paystack-webhook', time: '31 May 2026, 14:01:54 UTC' },
+        ],
+      },
+      'JNL-0003': {
+        id: 'JNL-20260531-0003', status: 'failed',
+        txId: 'TXN-00421', date: '31 May 2026', type: 'transfer.wallet-to-bank',
+        amount: '₦15,000.00 NGN', productLine: 'consumer-app', biller: '—',
+        rule: 'R004 — consumer-app × transfer.wallet-to-bank',
+        accountingRef: null, postedAt: null,
+        lines: [
+          { type: 'dr', code: 'A1010', name: 'Cash & Equivalents', amt: '₦15,000.00' },
+          { type: 'cr', code: 'L2010', name: 'Customer Wallets', amt: '₦15,000.00' },
+        ],
+        timeline: [
+          { ok: false, event: 'Retry 3 failed — accounting system API returned 503', time: '31 May 2026, 13:48:00 UTC' },
+          { ok: false, event: 'Retry 2 failed — accounting system API returned 503', time: '31 May 2026, 13:33:00 UTC' },
+          { ok: false, event: 'Initial post failed — accounting system API returned 503', time: '31 May 2026, 13:18:00 UTC' },
+          { ok: true, event: 'Journal entry generated', time: '31 May 2026, 13:17:55 UTC' },
+          { ok: true, event: 'Transaction ingested via paystack-webhook', time: '31 May 2026, 13:16:12 UTC' },
+        ],
+      },
+      'JNL-0005': {
+        id: 'JNL-20260531-0005', status: 'unmapped',
+        txId: 'TXN-00423', date: '31 May 2026', type: 'collection.pos',
+        amount: '₦8,500.00 NGN', productLine: 'pos-network', biller: '—',
+        rule: null, accountingRef: null, postedAt: null,
+        lines: [{ type: 'dr', code: 'X9999', name: 'Suspense', amt: '₦8,500.00' }],
+        timeline: [
+          { ok: false, event: 'No matching rule — parked in suspense account (X9999)', time: '31 May 2026, 14:03:07 UTC' },
+          { ok: true, event: 'Transaction ingested via flutterwave-webhook', time: '31 May 2026, 14:00:33 UTC' },
+        ],
+      },
+      'JNL-0002': {
+        id: 'JNL-20260531-0002', status: 'posted',
+        txId: 'TXN-00420', date: '31 May 2026', type: 'payment.airtime',
+        amount: '₦200.00 NGN', productLine: 'consumer-app', biller: 'mtn',
+        rule: 'R002 — consumer-app + mtn × payment.airtime',
+        accountingRef: 'ZB-JNL-20260531-004202', postedAt: '31 May 2026, 13:56:05 UTC',
+        lines: [
+          { type: 'dr', code: 'A1050', name: 'Float — BuyPower', amt: '₦200.00' },
+          { type: 'cr', code: 'I4010', name: 'Revenue — Bill Payments', amt: '₦200.00' },
+        ],
+        timeline: [
+          { ok: true, event: 'Posted to accounting system', time: '31 May 2026, 13:56:05 UTC' },
+          { ok: true, event: 'Journal entry generated', time: '31 May 2026, 13:56:01 UTC' },
+          { ok: true, event: 'Mapping rule resolved — R002', time: '31 May 2026, 13:56:00 UTC' },
+          { ok: true, event: 'Transaction ingested via paystack-webhook', time: '31 May 2026, 13:55:12 UTC' },
+        ],
+      },
+      'JNL-0004': {
+        id: 'JNL-20260531-0004', status: 'posted',
+        txId: 'TXN-00424', date: '31 May 2026', type: 'payment.cable-tv',
+        amount: '₦4,200.00 NGN', productLine: 'consumer-app', biller: 'dstv',
+        rule: 'R003 — consumer-app + dstv × payment.cable-tv',
+        accountingRef: 'ZB-JNL-20260531-004244', postedAt: '31 May 2026, 13:45:38 UTC',
+        lines: [
+          { type: 'dr', code: 'A1050', name: 'Float — BuyPower', amt: '₦4,200.00' },
+          { type: 'cr', code: 'I4010', name: 'Revenue — Bill Payments', amt: '₦4,200.00' },
+        ],
+        timeline: [
+          { ok: true, event: 'Posted to accounting system', time: '31 May 2026, 13:45:38 UTC' },
+          { ok: true, event: 'Journal entry generated', time: '31 May 2026, 13:45:34 UTC' },
+          { ok: true, event: 'Mapping rule resolved — R003', time: '31 May 2026, 13:45:33 UTC' },
+          { ok: true, event: 'Transaction ingested via paystack-webhook', time: '31 May 2026, 13:44:51 UTC' },
+        ],
+      },
+      'JNL-0006': {
+        id: 'JNL-20260531-0006', status: 'posted',
+        txId: 'TXN-00424', date: '31 May 2026', type: 'payment.data',
+        amount: '₦1,000.00 NGN', productLine: 'consumer-app', biller: '—',
+        rule: 'R005 — consumer-app catch-all',
+        accountingRef: 'ZB-JNL-20260531-004266', postedAt: '31 May 2026, 14:03:15 UTC',
+        lines: [
+          { type: 'dr', code: 'A1010', name: 'Cash & Equivalents', amt: '₦1,000.00' },
+          { type: 'cr', code: 'I4010', name: 'Revenue — Bill Payments', amt: '₦800.00' },
+          { type: 'cr', code: 'I4020', name: 'Revenue — Transfer Fees', amt: '₦200.00' },
+        ],
+        timeline: [
+          { ok: true, event: 'Posted to accounting system', time: '31 May 2026, 14:03:15 UTC' },
+          { ok: true, event: 'Journal entry generated', time: '31 May 2026, 14:03:11 UTC' },
+          { ok: true, event: 'Mapping rule resolved — R005 (catch-all)', time: '31 May 2026, 14:03:10 UTC' },
+          { ok: true, event: 'Transaction ingested via paystack-webhook', time: '31 May 2026, 14:02:44 UTC' },
+        ],
+      },
+      'JNL-0007': {
+        id: 'JNL-20260531-0007', status: 'retry-exhausted',
+        txId: 'TXN-00427', date: '31 May 2026', type: 'loan.disbursement',
+        amount: '₦200,000.00 NGN', productLine: 'consumer-app', biller: '—',
+        rule: 'consumer-app × loan.disbursement',
+        accountingRef: null, postedAt: null,
+        lines: [
+          { type: 'dr', code: 'A1020', name: 'Loans Receivable', amt: '₦200,000.00' },
+          { type: 'cr', code: 'L2010', name: 'Customer Wallets', amt: '₦200,000.00' },
+        ],
+        timeline: [
+          { ok: false, event: 'Retry 5 failed — retry_exhausted. Manual intervention required.', time: '31 May 2026, 11:18:00 UTC' },
+          { ok: false, event: 'Retry 4 failed — accounting system API returned 503', time: '31 May 2026, 07:18:00 UTC' },
+          { ok: false, event: 'Retry 3 failed — accounting system API returned 503', time: '31 May 2026, 03:18:00 UTC' },
+          { ok: true, event: 'Journal entry generated', time: '31 May 2026, 02:17:55 UTC' },
+        ],
+      },
+      'JNL-0008': {
+        id: 'JNL-20260531-0008', status: 'unmapped',
+        txId: 'TXN-00426', date: '31 May 2026', type: 'agency.cash-in',
+        amount: '₦50,000.00 NGN', productLine: 'agency-banking', biller: '—',
+        rule: null, accountingRef: null, postedAt: null,
+        lines: [{ type: 'dr', code: 'X9999', name: 'Suspense', amt: '₦50,000.00' }],
+        timeline: [
+          { ok: false, event: 'No matching rule — parked in suspense account (X9999)', time: '31 May 2026, 14:03:07 UTC' },
+          { ok: true, event: 'Transaction ingested via csv-import', time: '31 May 2026, 11:30:01 UTC' },
+        ],
+      },
+      'JNL-0009': {
+        id: 'JNL-20260531-0009', status: 'posted',
+        txId: 'TXN-00431', date: '31 May 2026', type: 'transfer.wallet-to-bank',
+        amount: '₦75,000.00 NGN', productLine: 'api-gateway', biller: '—',
+        rule: 'Reversal of JNL-20260531-0008 · consumer-app × transfer.wallet-to-bank',
+        accountingRef: 'ZB-REV-20260531-000431', postedAt: '31 May 2026, 11:15:22 UTC',
+        isReversal: true,
+        lines: [
+          { type: 'dr', code: 'L2010', name: 'Customer Wallets', amt: '₦75,000.00' },
+          { type: 'cr', code: 'A1010', name: 'Cash & Equivalents', amt: '₦75,000.00' },
+        ],
+        timeline: [
+          { ok: true, event: 'Reversal posted to accounting system', time: '31 May 2026, 11:15:22 UTC' },
+          { ok: true, event: 'Reversal journal entry generated (DR/CR swapped from original)', time: '31 May 2026, 11:15:18 UTC' },
+          { ok: true, event: 'Original posting confirmed — reversal entry eligible', time: '31 May 2026, 11:15:17 UTC' },
+          { ok: true, event: 'Reversal transaction ingested via paystack-webhook', time: '31 May 2026, 11:14:50 UTC' },
+        ],
+      },
+    };
+
+    function openJournalDrawer(id) {
+      const d = journalData[id] || journalData['JNL-0001'];
+      document.getElementById('jd-id').textContent = d.id;
+
+      const statusMap = { posted: 'Posted', failed: 'Failed', unmapped: 'Unmapped', 'retry-exhausted': 'Retry exhausted', pending: 'Pending' };
+      const badge = document.getElementById('jd-status-badge');
+      const s = d.status === 'retry-exhausted' ? 'retry-exhausted' : d.status;
+      badge.className = 'badge ' + s;
+      badge.innerHTML = `<span class="badge-dot"></span>${statusMap[d.status] || d.status}`;
+
+      const retryBtn = document.getElementById('jd-retry-btn');
+      retryBtn.style.display = (d.status === 'failed' || d.status === 'retry-exhausted') ? 'inline-flex' : 'none';
+
+      const lines = d.lines.map(l => `
+      <div class="jline">
+        <span class="jline-type ${l.type}">${l.type.toUpperCase()}</span>
+        <div class="jline-acct">
+          <div class="jline-acct-code">${l.code}</div>
+          <div class="jline-acct-name">${l.name}</div>
+        </div>
+        <span class="jline-amt">${l.amt}</span>
+      </div>`).join('');
+
+      const timeline = d.timeline.map(t => `
+      <div class="timeline-item">
+        <div class="tl-dot ${t.ok ? 'ok' : 'err'}"></div>
+        <div><div class="tl-event">${t.event}</div><div class="tl-time">${t.time}</div></div>
+      </div>`).join('');
+
+      document.getElementById('jd-body').innerHTML = `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Entry Lines</div>
+        ${d.isReversal ? '<div class="reversal-notice"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8A5.5 5.5 0 112 8M13.5 8V5M13.5 8H10.5"/></svg>Reversal entry — debits and credits are swapped from the original journal entry.</div>' : ''}
+        <div class="jlines">${lines}</div>
+        ${d.lines.length === 1 && !d.isReversal ? '<p style="font-size:var(--text-xs);color:var(--color-text-3);margin-top:8px">Incomplete — parked in suspense pending rule assignment</p>' : ''}
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">Transaction</div>
+        <div class="drawer-grid">
+          <div class="df"><label>TX ID</label><span class="mono">${d.txId}</span></div>
+          <div class="df"><label>Date</label><span>${d.date}</span></div>
+          <div class="df"><label>Type</label><span class="mono">${d.type}</span></div>
+          <div class="df"><label>Amount</label><span style="font-weight:700">${d.amount}</span></div>
+          <div class="df"><label>Product Line</label><span>${d.productLine}</span></div>
+          <div class="df"><label>Biller</label><span>${d.biller}</span></div>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">Mapping &amp; Posting</div>
+        <div class="drawer-grid">
+          <div class="df" style="grid-column:1/-1"><label>Rule Applied</label><span>${d.rule || '<span style="color:var(--color-warning)">No rule matched — parked in suspense</span>'}</span></div>
+          <div class="df"><label>Accounting Ref</label><span class="mono">${d.accountingRef || '—'}</span></div>
+          <div class="df"><label>Posted At</label><span>${d.postedAt || '—'}</span></div>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <div class="drawer-section-title">Posting History</div>
+        <div class="timeline">${timeline}</div>
+      </div>`;
+
+      open('journal-overlay', 'journal-drawer');
+    }
+
+    function closeJournalDrawer() { close('journal-overlay', 'journal-drawer'); }
+
+    /* ── RULE DRAWER ── */
+    function openRuleDrawer(id) {
+      document.getElementById('rd-title').textContent = id ? 'Edit Mapping Rule' : 'Add Mapping Rule';
+      open('rule-overlay', 'rule-drawer');
+    }
+    function closeRuleDrawer() { close('rule-overlay', 'rule-drawer'); }
+
+    function setRuleType(type) {
+      document.getElementById('simple-accounts').style.display = type === 'simple' ? 'block' : 'none';
+      document.getElementById('compound-accounts').style.display = type === 'compound' ? 'block' : 'none';
+    }
+
+    let _compoundCount = 1;
+    function addCompoundEntry() {
+      _compoundCount++;
+      const acctSelect = `<select style="flex:1"><option value="">Select account…</option><optgroup label="Assets"><option>A1010 — Cash &amp; Equivalents</option><option>A1050 — Float — BuyPower</option></optgroup><optgroup label="Liabilities"><option>L2010 — Customer Wallets</option><option>L2030 — Collected Revenue Clearing</option></optgroup><optgroup label="Income"><option>I4010 — Revenue — Bill Payments</option></optgroup><optgroup label="Suspense"><option>X9999 — Suspense</option></optgroup></select>`;
+      const div = document.createElement('div');
+      div.className = 'compound-entry';
+      div.innerHTML = `<div class="compound-entry-header"><span class="compound-entry-num">Entry ${_compoundCount}</span><button class="btn-link danger" style="font-size:11px" onclick="this.closest('.compound-entry').remove()">Remove</button></div><div class="form-field"><label>Label (optional)</label><input type="text" placeholder="e.g. Aggregator settlement"></div><div class="form-field"><label>Debit Account <span style="color:var(--color-error)">*</span></label>${acctSelect}</div><div class="form-field" style="margin-bottom:0"><label>Credit Account <span style="color:var(--color-error)">*</span></label><div class="credit-row">${acctSelect}<input type="number" placeholder="%" value="100" style="width:64px"><button class="btn btn-ghost btn-sm" onclick="addCompoundCreditRow(this)">+</button></div></div>`;
+      document.getElementById('compound-entries').appendChild(div);
+    }
+
+    function addCompoundCreditRow(btn) {
+      const acctSelect = `<select style="flex:1"><option value="">Select account…</option><optgroup label="Assets"><option>A1010 — Cash &amp; Equivalents</option><option>A1050 — Float — BuyPower</option></optgroup><optgroup label="Liabilities"><option>L2010 — Customer Wallets</option><option>L2030 — Collected Revenue Clearing</option></optgroup><optgroup label="Income"><option>I4010 — Revenue — Bill Payments</option></optgroup></select>`;
+      const row = document.createElement('div');
+      row.className = 'credit-row';
+      row.innerHTML = `${acctSelect}<input type="number" placeholder="%" style="width:64px"><button class="btn btn-ghost btn-sm" onclick="this.closest('.credit-row').remove()">×</button>`;
+      btn.closest('.form-field').appendChild(row);
+    }
+
+    function addCreditRow() {
+      const r = document.createElement('div');
+      r.className = 'credit-row';
+      r.innerHTML = `
+      <select style="flex:1"><option value="">Select account…</option>
+        <optgroup label="Assets"><option>A1010 — Cash &amp; Equivalents</option><option>A1050 — Float — BuyPower</option></optgroup>
+        <optgroup label="Liabilities"><option>L2010 — Customer Wallets</option><option>L2020 — Merchant Payables</option></optgroup>
+        <optgroup label="Income"><option>I4010 — Revenue — Bill Payments</option><option>I4020 — Revenue — Transfer Fees</option><option>I4030 — Revenue — Platform Fees</option></optgroup>
+      </select>
+      <input type="number" placeholder="%" min="1" max="100" style="width:64px">
+      <button class="btn btn-ghost btn-sm" onclick="this.closest('.credit-row').remove()">×</button>`;
+      document.getElementById('credit-rows').appendChild(r);
+    }
+
+    function saveRule() { closeRuleDrawer(); showToast('Mapping rule saved successfully'); }
+
+    /* ── TOGGLE MODAL ── */
+    let _pendingToggle = null;
+
+    function showToggleModal(checkbox, ruleName) {
+      _pendingToggle = checkbox;
+      const activating = checkbox.checked;
+      document.getElementById('modal-title').textContent = activating ? 'Activate rule?' : 'Deactivate rule?';
+      document.getElementById('modal-body-text').innerHTML = activating
+        ? `Activating <strong>${ruleName}</strong> will allow the engine to apply it on the next run. Transactions matching this pattern will be posted normally.`
+        : `Deactivating <strong>${ruleName}</strong> will stop the engine from applying it. Future transactions that would have matched this rule will be parked in the suspense account. Already-posted journal entries are not affected.`;
+      const btn = document.getElementById('modal-confirm-btn');
+      btn.textContent = activating ? 'Activate' : 'Deactivate';
+      btn.className = activating ? 'btn btn-primary' : 'btn btn-danger';
+      document.getElementById('toggle-modal').classList.add('open');
+    }
+
+    function cancelToggle(e) {
+      if (e && e.target !== document.getElementById('toggle-modal')) return;
+      if (_pendingToggle) _pendingToggle.checked = !_pendingToggle.checked;
+      _pendingToggle = null;
+      document.getElementById('toggle-modal').classList.remove('open');
+    }
+
+    function confirmToggle() {
+      const activated = _pendingToggle && _pendingToggle.checked;
+      _pendingToggle = null;
+      document.getElementById('toggle-modal').classList.remove('open');
+      showToast(activated ? 'Rule activated' : 'Rule deactivated');
+    }
+
+    /* ── EDIT ROLE ── */
+    let _editRoleBtn = null;
+    function openEditRole(btn) {
+      _editRoleBtn = btn;
+      const row = btn.closest('tr');
+      const name = row.querySelector('td span[style*="font-weight"]').textContent;
+      const roleBadge = row.querySelector('.badge');
+      const currentRole = roleBadge.classList.contains('admin-role') ? 'admin' : roleBadge.classList.contains('finance-role') ? 'finance' : 'auditor';
+      document.getElementById('edit-role-desc').textContent = `Changing role for ${name}.`;
+      const sel = document.getElementById('edit-role-select');
+      sel.value = currentRole;
+      document.getElementById('edit-role-modal').classList.add('open');
+    }
+    function cancelEditRole(e) {
+      if (e && e.target !== document.getElementById('edit-role-modal')) return;
+      document.getElementById('edit-role-modal').classList.remove('open');
+    }
+    function confirmEditRole() {
+      document.getElementById('edit-role-modal').classList.remove('open');
+      showToast('Role updated');
+    }
+
+    /* ── INVITE USER ── */
+    function openInviteUser() { open('invite-overlay', 'invite-drawer'); }
+    function closeInviteUser() { close('invite-overlay', 'invite-drawer'); }
+
+    /* ── SETTINGS TABS ── */
+    function switchSettingsTab(tab, btn) {
+      document.querySelectorAll('.settings-nav-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('settings-' + tab).classList.add('active');
+    }
+
+    /* ── ADAPTER CONFIGURE ── */
+    const acDefs = {
+      'paystack-webhook': {
+        subtitle: 'Inbound · Webhook',
+        sections: [
+          {
+            title: 'Webhook Endpoint', fields: [
+              { label: 'Inbound URL', type: 'display', value: 'https://api.ledgerise.dev/in/paystack-webhook', hint: 'Copy this URL into Paystack dashboard → Settings → API Keys → Webhook URL.' },
+              { label: 'Webhook Secret', type: 'password', hint: 'Used to verify HMAC-SHA512 signatures on incoming payloads. Required.' },
+            ]
+          },
+          {
+            title: 'Accepted Events', fields: [
+              { label: 'Forward these event types', type: 'checkboxes', options: ['charge.success', 'transfer.success', 'transfer.failed', 'transfer.reversed'], checked: ['charge.success', 'transfer.success', 'transfer.reversed'], hint: 'Unrecognised events return 200 and are discarded.' },
+            ]
+          },
+          {
+            title: 'Normalization Defaults', fields: [
+              { label: 'Default Product Line', type: 'text', value: 'consumer-app', hint: 'Applied when the event payload does not include a product line.' },
+            ]
+          },
+        ],
+      },
+      'flutterwave-webhook': {
+        subtitle: 'Inbound · Webhook',
+        sections: [
+          {
+            title: 'Webhook Endpoint', fields: [
+              { label: 'Inbound URL', type: 'display', value: 'https://api.ledgerise.dev/in/flutterwave-webhook', hint: 'Set this URL in Flutterwave dashboard → Settings → Webhooks.' },
+              { label: 'Secret Hash', type: 'password', hint: 'Flutterwave sends this as the verif-hash header. Required for payload verification.' },
+            ]
+          },
+          {
+            title: 'Accepted Events', fields: [
+              { label: 'Forward these event types', type: 'checkboxes', options: ['charge.completed', 'transfer.completed', 'transfer.failed'], checked: ['charge.completed', 'transfer.completed'], hint: 'Only selected event types will be normalized and stored.' },
+            ]
+          },
+          {
+            title: 'Normalization Defaults', fields: [
+              { label: 'Default Product Line', type: 'text', value: 'consumer-app', hint: '' },
+            ]
+          },
+        ],
+      },
+      'mpesa-poll': {
+        subtitle: 'Inbound · Poll',
+        sections: [
+          {
+            title: 'Daraja API Credentials', fields: [
+              { label: 'Consumer Key', type: 'password', hint: 'From your app on developer.safaricom.co.ke.' },
+              { label: 'Consumer Secret', type: 'password', hint: 'From your app on developer.safaricom.co.ke.' },
+              { label: 'Business Shortcode', type: 'text', value: '', hint: 'Your M-Pesa paybill or till number.' },
+              { label: 'Environment', type: 'select', options: ['Production', 'Sandbox'], value: 'Production', hint: 'Use Sandbox for testing. Never mix with live credentials.' },
+            ]
+          },
+          {
+            title: 'Poll Schedule', fields: [
+              { label: 'Poll Interval', type: 'select', options: ['Every 5 minutes', 'Every 15 minutes', 'Every 30 minutes', 'Every hour'], value: 'Every 15 minutes', hint: 'How often Ledgerise queries the Daraja API for new transactions.' },
+            ]
+          },
+        ],
+      },
+      'csv-import': {
+        subtitle: 'Inbound · File import',
+        sections: [
+          {
+            title: 'Column Mapping', desc: 'Map your CSV column headers to Ledgerise canonical fields.', fields: [
+              { label: 'Transaction ID column', type: 'text', value: 'reference', hint: 'Maps to source_id for deduplication.' },
+              { label: 'Date column', type: 'text', value: 'transaction_date', hint: 'Maps to occurred_at.' },
+              { label: 'Amount column', type: 'text', value: 'amount', hint: 'Maps to amount.' },
+              { label: 'Status column', type: 'text', value: 'status', hint: 'Values must be: settled, pending, failed, reversed, disputed.' },
+              { label: 'Type column', type: 'text', value: 'transaction_type', hint: 'Must follow dot notation, e.g. payment.electricity.' },
+              { label: 'Product Line column', type: 'text', value: 'product_line', hint: 'Maps to product.line. Required.' },
+              { label: 'Biller column (optional)', type: 'text', value: 'biller', hint: 'Maps to product.biller. Leave blank if not in CSV.' },
+            ]
+          },
+          {
+            title: 'Format', fields: [
+              { label: 'Delimiter', type: 'select', options: ['Comma (,)', 'Semicolon (;)', 'Tab', 'Pipe (|)'], value: 'Comma (,)', hint: '' },
+              { label: 'Date Format', type: 'select', options: ['YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY', 'ISO 8601'], value: 'YYYY-MM-DD', hint: '' },
+              { label: 'Amount Unit', type: 'select', options: ['Smallest unit (kobo, cents)', 'Major unit (naira, dollars)'], value: 'Smallest unit (kobo, cents)', hint: 'Ledgerise stores amounts in the smallest currency unit internally.' },
+            ]
+          },
+        ],
+      },
+      'zoho-books': {
+        subtitle: 'Outbound · Journal posting',
+        sections: [
+          {
+            title: 'OAuth 2.0 Authentication', fields: [
+              { label: 'Client ID', type: 'text', value: 'zoho_****_client_id', hint: 'From Zoho API Console (api-console.zoho.com). Required scope: ZohoBooks.accountants.ALL.' },
+              { label: 'Client Secret', type: 'password', hint: 'Keep this secret. Never share or log it.' },
+              { label: 'Organization ID', type: 'text', value: '20109340', hint: 'Found in Zoho Books → Settings → Organization Profile.' },
+              { label: '', type: 'action', text: 'Test connection', status: 'Connected · token expires in 89 days', statusClass: 'ok' },
+            ]
+          },
+          {
+            title: 'Posting Behaviour', fields: [
+              { label: 'Batch size (entries per API call)', type: 'number', value: '100', hint: 'Zoho Books allows up to 100 manual journals per API call.' },
+              { label: 'On rate limit (429)', type: 'select', options: ['Retry with exponential backoff', 'Pause batch and alert'], value: 'Retry with exponential backoff', hint: 'Zoho allows 100 API calls/min per organization.' },
+            ]
+          },
+          {
+            title: 'COA Sync', fields: [
+              { label: 'Auto-sync frequency', type: 'select', options: ['Daily at midnight', 'Weekly on Monday', 'Manual only'], value: 'Daily at midnight', hint: 'How often Ledgerise pulls the latest chart of accounts from Zoho Books.' },
+            ]
+          },
+        ],
+      },
+    };
+
+    function openAdapterConfig(id) {
+      const def = acDefs[id];
+      if (!def) return;
+      document.getElementById('ac-title').textContent = id;
+      document.getElementById('ac-subtitle').textContent = def.subtitle;
+      let html = '';
+      def.sections.forEach(s => {
+        html += `<div class="drawer-section"><div class="drawer-section-title">${s.title}</div>`;
+        if (s.desc) html += `<p class="config-section-desc">${s.desc}</p>`;
+        s.fields.forEach(f => {
+          if (f.type === 'display') {
+            html += `<div class="form-field"><label>${f.label}</label><div class="display-value"><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${f.value}</span><button class="btn-link primary copy-btn" onclick="navigator.clipboard.writeText('${f.value}').then(()=>showToast('URL copied'))">Copy</button></div><div class="hint">${f.hint}</div></div>`;
+          } else if (f.type === 'password') {
+            html += `<div class="form-field"><label>${f.label}</label><input type="password" placeholder="••••••••••••"><div class="hint">${f.hint}</div></div>`;
+          } else if (f.type === 'text') {
+            html += `<div class="form-field"><label>${f.label}</label><input type="text" value="${f.value || ''}"><div class="hint">${f.hint}</div></div>`;
+          } else if (f.type === 'number') {
+            html += `<div class="form-field"><label>${f.label}</label><input type="number" value="${f.value || ''}"><div class="hint">${f.hint}</div></div>`;
+          } else if (f.type === 'select') {
+            const opts = f.options.map(o => `<option${o === f.value ? ' selected' : ''}>${o}</option>`).join('');
+            html += `<div class="form-field"><label>${f.label}</label><select>${opts}</select><div class="hint">${f.hint}</div></div>`;
+          } else if (f.type === 'checkboxes') {
+            const boxes = f.options.map(o => `<label class="checkbox-label"><input type="checkbox"${f.checked.includes(o) ? ' checked' : ''}> ${o}</label>`).join('');
+            html += `<div class="form-field"><label>${f.label}</label><div class="checkbox-group">${boxes}</div><div class="hint">${f.hint}</div></div>`;
+          } else if (f.type === 'action') {
+            html += `<div class="form-field"><div class="connect-field"><button class="btn btn-secondary btn-sm" onclick="showToast('Connection successful')">${f.text}</button><span class="connect-status ${f.statusClass}">${f.status}</span></div></div>`;
+          }
+        });
+        html += '</div>';
+      });
+      document.getElementById('ac-body').innerHTML = html;
+      open('ac-overlay', 'ac-drawer');
+    }
+    function closeAdapterConfig() { close('ac-overlay', 'ac-drawer'); }
+
+    /* ── DRAWER HELPERS ── */
+    function open(overlayId, drawerId) {
+      document.getElementById(overlayId).classList.add('open');
+      document.getElementById(drawerId).classList.add('open');
+    }
+    function close(overlayId, drawerId) {
+      document.getElementById(overlayId).classList.remove('open');
+      document.getElementById(drawerId).classList.remove('open');
+    }
+  </script>
+</body>
+
+</html>
