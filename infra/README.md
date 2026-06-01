@@ -34,6 +34,7 @@ Apply the current migration manually with `psql`:
 
 ```bash
 psql "$DATABASE_URL" -f infra/migrations/0001_core_ingestion.sql
+psql "$DATABASE_URL" -f infra/migrations/0002_mapping_rules_and_coa.sql
 ```
 
 ## Seed Data
@@ -46,6 +47,7 @@ Apply the current seed manually with `psql`:
 
 ```bash
 psql "$DATABASE_URL" -f infra/seed/0001_local_operator_and_adapters.sql
+psql "$DATABASE_URL" -f infra/seed/0002_default_coa.sql
 ```
 
 When `DATABASE_URL` is set, `apps/api` uses PostgreSQL for ingestion storage. It resolves the default operator in this order:
@@ -61,6 +63,7 @@ After applying the migration and seed, verify ingestion behavior against Postgre
 ```bash
 npm run build
 DATABASE_URL="$DATABASE_URL" npm run verify:postgres
+DATABASE_URL="$DATABASE_URL" npm run verify:mapping
 ```
 
 This starts the built API on a temporary port and verifies valid ingestion, duplicate handling, invalid ingestion errors, transaction list/detail reads, and ingestion error reads.

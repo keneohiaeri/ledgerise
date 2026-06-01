@@ -22,7 +22,8 @@
     "verify:postgres": "node scripts/verify-postgres-ingestion.mjs",
     "verify:generic-webhook": "node scripts/verify-generic-webhook.mjs",
     "verify:generic-csv": "node scripts/verify-generic-csv.mjs",
-    "verify:generic-poll": "node scripts/verify-generic-poll.mjs"
+    "verify:generic-poll": "node scripts/verify-generic-poll.mjs",
+    "verify:mapping": "node scripts/verify-mapping.mjs"
   },
   "engines": {
     "node": ">=20"

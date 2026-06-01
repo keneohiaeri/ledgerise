@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ledgerise/core-ingestion": "0.1.0"
+    "@ledgerise/core-ingestion": "0.1.0",
+    "@ledgerise/core-mapping": "0.1.0"
   },
   "devDependencies": {
     "tsx": "^4.7.0"
