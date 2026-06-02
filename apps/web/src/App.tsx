@@ -2607,122 +2607,137 @@ function parseCoaCsv(text: string): CoaParseResult[] {
   return results;
 }
 
+const COA_SECTION_LABELS: Record<AccountType, string> = {
+  asset:     '1 — Assets',
+  liability: '2 — Liabilities',
+  equity:    '3 — Equity',
+  revenue:   '4 — Income (Revenue)',
+  expense:   '5 — Cost of Sales / Expenses'
+};
+const COA_SECTION_ORDER: AccountType[] = ['asset', 'liability', 'equity', 'revenue', 'expense'];
+
+const COA_CSV_TEMPLATE = [
+  'Account Code,Account Name,Type',
+  '100030,BNK — Globus Bank (Collection),Asset',
+  '199999,Suspense / Clearing Account,Asset',
+  '200010,Payable — Biller Settlement Pool,Liability',
+  '410010,AirVend | MTN — Airtime & Data,Income',
+  '510210,COS | Aggregator Transaction Cost,Expense'
+].join('\r\n');
+
+function downloadTemplate() {
+  const blob = new Blob([COA_CSV_TEMPLATE], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'coa-import-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function CsvCoaImportPanel(props: {
   accounts: ChartAccount[];
   onImport: (rows: CoaRow[]) => Promise<void>;
 }) {
   const { accounts, onImport } = props;
-  const [csvText, setCsvText] = useState('');
-  const [parsed, setParsed] = useState<CoaParseResult[]>([]);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState('');
+  const [importStatus, setImportStatus] = useState<{ ok: true; count: number } | { ok: false; message: string } | null>(null);
 
-  useEffect(() => {
-    setParsed(csvText.trim() ? parseCoaCsv(csvText) : []);
-  }, [csvText]);
-
-  function handleFile(e: ChangeEvent<HTMLInputElement>) {
+  async function handleFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => { setCsvText(reader.result as string); e.target.value = ''; };
-    reader.readAsText(file);
-  }
-
-  async function handleImport() {
-    const valid = parsed.filter((r): r is CoaRow => 'code' in r);
-    if (!valid.length) return;
+    e.target.value = '';
+    setImportStatus(null);
     setImporting(true);
-    setImportError('');
     try {
+      const text = await file.text();
+      const parsed = parseCoaCsv(text);
+      const valid = parsed.filter((r): r is CoaRow => 'code' in r);
+      if (!valid.length) {
+        setImportStatus({ ok: false, message: 'No valid accounts found in file. Check that the CSV has code, name, and type columns.' });
+        return;
+      }
       await onImport(valid);
-      setCsvText('');
+      setImportStatus({ ok: true, count: valid.length });
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : 'Import failed');
+      setImportStatus({ ok: false, message: e instanceof Error ? e.message : 'Import failed' });
     } finally {
       setImporting(false);
     }
   }
 
-  const validRows = parsed.filter((r): r is CoaRow => 'code' in r);
-  const errorRows = parsed.filter((r): r is { error: string; raw: string } => 'error' in r);
+  const grouped = COA_SECTION_ORDER.reduce<Record<AccountType, ChartAccount[]>>(
+    (acc, type) => { acc[type] = accounts.filter((a) => a.type === type); return acc; },
+    { asset: [], liability: [], equity: [], revenue: [], expense: [] }
+  );
 
   return (
     <div className="settings-panel active">
       <h2>COA Reference</h2>
-      <p className="panel-desc">
-        Upload a CSV file or paste account data below. Supports a simple three-column format
-        (<code>code, name, type</code>) or a full export with a Class column where type is
-        Asset / Liability / Equity / Income / Cost of Sales / Expense.
-      </p>
+      <p className="panel-desc">Account codes from your chart of accounts used in mapping rules.</p>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', marginBottom: 'var(--s2)' }}>
-        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
-          Choose CSV file
-          <input type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={handleFile} />
-        </label>
-        <span className="dim" style={{ fontSize: 'var(--text-sm)' }}>or paste CSV below</span>
+      <div className="coa-import-strip">
+        <div className="coa-import-strip-info">
+          <div className="coa-import-strip-title">Import from CSV</div>
+          <div className="coa-import-strip-desc">
+            Upload a CSV with columns: Code, Account Name, Type. Accepts simple three-column format or a
+            full export where Type is Asset / Liability / Equity / Income / Cost of Sales / Expense.
+          </div>
+        </div>
+        <div className="coa-import-strip-actions">
+          <button className="btn btn-secondary btn-sm" onClick={downloadTemplate}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 2v8M5 7l3 3 3-3" /><path d="M2 12h12" />
+            </svg>
+            Template
+          </button>
+          <button className="btn btn-primary btn-sm" disabled={importing} onClick={() => fileRef.current?.click()}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 10V2M5 5l3-3 3 3" /><path d="M2 12h12" />
+            </svg>
+            {importing ? 'Importing…' : 'Import CSV'}
+          </button>
+          <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={handleFile} />
+        </div>
       </div>
 
-      <textarea
-        className="fi"
-        rows={5}
-        style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', resize: 'vertical' }}
-        placeholder={'code,name,type\n100030,Globus Bank (Collection),asset\n410010,AirVend | MTN Revenue,revenue\n199999,Suspense,asset'}
-        value={csvText}
-        onChange={(e) => setCsvText(e.target.value)}
-      />
-
-      {parsed.length > 0 && (
-        <div style={{ marginTop: 'var(--s3)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', marginBottom: 'var(--s2)' }}>
-            <span style={{ fontSize: 'var(--text-sm)' }}>{validRows.length} account{validRows.length !== 1 ? 's' : ''} ready to import</span>
-            {errorRows.length > 0 && (
-              <span className="form-error" style={{ fontSize: 'var(--text-sm)' }}>{errorRows.length} row{errorRows.length !== 1 ? 's' : ''} skipped — unknown type</span>
-            )}
-            <button className="btn btn-primary btn-sm" onClick={handleImport} disabled={importing || !validRows.length} style={{ marginLeft: 'auto' }}>
-              {importing ? 'Importing…' : `Import ${validRows.length} account${validRows.length !== 1 ? 's' : ''}`}
-            </button>
-          </div>
-          <div className="table-card" style={{ maxHeight: 240, overflow: 'auto' }}>
-            <table className="tbl">
-              <thead><tr><th>Code</th><th>Account Name</th><th>Type</th></tr></thead>
-              <tbody>
-                {validRows.map((r, i) => (
-                  <tr key={i}>
-                    <td className="mono">{r.code}</td>
-                    <td>{r.name}</td>
-                    <td>{accountTypeChip(r.type)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      {importStatus && (
+        importStatus.ok
+          ? <div className="notice" style={{ marginBottom: 'var(--s3)' }}>{importStatus.count} account{importStatus.count !== 1 ? 's' : ''} imported successfully.</div>
+          : <div className="form-error" style={{ marginBottom: 'var(--s3)' }}>{importStatus.message}</div>
       )}
 
-      {importError && <div className="form-error" style={{ marginTop: 'var(--s2)' }}>{importError}</div>}
-
-      <div style={{ marginTop: 'var(--s5)' }}>
-        <div className="config-section-title">Current Accounts ({accounts.length})</div>
-        <div className="table-card">
-          <table className="tbl">
-            <thead><tr><th>Code</th><th>Account Name</th><th>Type</th><th>Status</th></tr></thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.id}>
-                  <td className="mono">{account.code}</td>
-                  <td>{account.name}</td>
-                  <td>{accountTypeChip(account.type)}</td>
-                  <td><span className={`badge ${account.active ? 'active-rule' : 'failed'}`}>{account.active ? 'Active' : 'Inactive'}</span></td>
-                </tr>
-              ))}
-              {accounts.length === 0 && (
-                <tr><td colSpan={4} className="dim">No accounts imported yet.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="table-card">
+        <table className="tbl">
+          <thead>
+            <tr><th>Code</th><th>Account Name</th><th>Type</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            {accounts.length === 0 && (
+              <tr><td colSpan={4} className="dim">No accounts imported yet. Use Import CSV above to get started.</td></tr>
+            )}
+            {COA_SECTION_ORDER.flatMap((type) => {
+              const rows = grouped[type];
+              if (!rows.length) return [];
+              return [
+                <tr key={`hdr-${type}`}>
+                  <td colSpan={4} style={{ background: 'var(--color-muted-bg)', fontWeight: 600, fontSize: 11, color: 'var(--color-text-2)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                    {COA_SECTION_LABELS[type]}
+                  </td>
+                </tr>,
+                ...rows.map((account) => (
+                  <tr key={account.id}>
+                    <td className="mono">{account.code}</td>
+                    <td>{account.name}</td>
+                    <td>{accountTypeChip(account.type)}</td>
+                    <td><span className={`badge ${account.active ? 'active-rule' : 'failed'}`}>{account.active ? 'Active' : 'Inactive'}</span></td>
+                  </tr>
+                ))
+              ];
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
