@@ -1,4 +1,4 @@
-import { FormEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, FormEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 
 type Screen = 'transactions' | 'mapping-rules' | 'journal-log' | 'settings';
 type SettingsTab = 'coa' | 'schema' | 'adapters' | 'users' | 'system';
@@ -556,11 +556,6 @@ export function App() {
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [ruleForm, setRuleForm] = useState<RuleFormState>(emptyRuleForm);
   const [ruleDrawerOpen, setRuleDrawerOpen] = useState(false);
-  const [coaForm, setCoaForm] = useState({
-    code: '',
-    name: '',
-    type: 'asset' as AccountType
-  });
   const transactionImportInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -709,20 +704,14 @@ export function App() {
     }
   }
 
-  async function saveCoaAccount(event: FormEvent) {
-    event.preventDefault();
-    setError('');
-
-    try {
-      await apiPost('/api/coa/import', {
-        accounts: [coaForm]
-      });
-      setNotice(`Imported COA account ${coaForm.code}`);
-      setCoaForm({ code: '', name: '', type: 'asset' });
-      await refreshOperationalData();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Failed to import account');
-    }
+  async function importCoaFromCsv(rows: { code: string; name: string; type: AccountType }[]) {
+    const result = await apiPost<{ records: ChartAccount[] }>('/api/coa/import', { accounts: rows });
+    setAccounts((prev) => {
+      const byCode = new Map(prev.map((a) => [a.code, a]));
+      for (const a of result.records) byCode.set(a.code, a);
+      return [...byCode.values()].sort((a, b) => a.code.localeCompare(b.code));
+    });
+    setNotice(`Imported ${result.records.length} account${result.records.length !== 1 ? 's' : ''}`);
   }
 
   async function saveRule(event: FormEvent) {
@@ -1098,22 +1087,19 @@ export function App() {
             accounts={accounts}
             adapters={adapters}
             pollStatuses={pollStatuses}
-            coaForm={coaForm}
+            importCoaFromCsv={importCoaFromCsv}
             createApiKey={createApiKey}
             inviteUser={inviteUser}
             newApiKeySecret={newApiKeySecret}
             newUserPassword={newUserPassword}
             revokeApiKey={revokeApiKey}
             resetUserPassword={resetUserPassword}
-            setCoaForm={setCoaForm}
             setNewApiKeySecret={setNewApiKeySecret}
             setNewUserPassword={setNewUserPassword}
-            saveCoaAccount={saveCoaAccount}
             saveAdapterConfiguration={saveAdapterConfiguration}
             toggleAdapterConfiguration={toggleAdapterConfiguration}
             updateUser={updateUser}
             users={users}
-            error={error}
             setNotice={setNotice}
             systemSettings={systemSettings}
             saveSystemSettings={saveSystemSettings}
@@ -2133,22 +2119,19 @@ function SettingsView(props: {
   accounts: ChartAccount[];
   adapters: AdapterRecord[];
   pollStatuses: Record<string, PollStatusRecord>;
-  coaForm: { code: string; name: string; type: AccountType };
+  importCoaFromCsv: (rows: { code: string; name: string; type: AccountType }[]) => Promise<void>;
   createApiKey: (input: { name: string; scopes: ApiScope[] }) => Promise<void>;
   inviteUser: (input: { email: string; displayName?: string; role: UserRole; password?: string }) => Promise<void>;
   newApiKeySecret: string;
   newUserPassword: string;
   revokeApiKey: (apiKey: ApiKeyRecord) => Promise<void>;
   resetUserPassword: (user: UserRecord) => Promise<void>;
-  setCoaForm: (form: { code: string; name: string; type: AccountType }) => void;
   setNewApiKeySecret: (secret: string) => void;
   setNewUserPassword: (password: string) => void;
-  saveCoaAccount: (event: FormEvent) => void;
   saveAdapterConfiguration: (adapter: AdapterRecord, config: unknown) => Promise<void>;
   toggleAdapterConfiguration: (adapter: AdapterRecord, enabled: boolean) => Promise<void>;
   updateUser: (user: UserRecord, patch: { role?: UserRole; status?: UserStatus }) => Promise<void>;
   users: UserRecord[];
-  error: string;
   setNotice: (notice: string) => void;
   systemSettings: SystemSettings | null;
   saveSystemSettings: (patch: Partial<SystemSettings>) => Promise<void>;
@@ -2160,22 +2143,19 @@ function SettingsView(props: {
     accounts,
     adapters,
     pollStatuses,
-    coaForm,
+    importCoaFromCsv,
     createApiKey,
     inviteUser,
     newApiKeySecret,
     newUserPassword,
     revokeApiKey,
     resetUserPassword,
-    setCoaForm,
     setNewApiKeySecret,
     setNewUserPassword,
-    saveCoaAccount,
     saveAdapterConfiguration,
     toggleAdapterConfiguration,
     updateUser,
     users,
-    error,
     setNotice: _setNotice,
     systemSettings,
     saveSystemSettings
@@ -2206,42 +2186,7 @@ function SettingsView(props: {
           {settingsTab === 'schema' ? (
             <SchemaSettingsPanel />
           ) : settingsTab === 'coa' ? (
-            <div className="settings-panel active">
-              <h2>COA Reference</h2>
-              <p className="panel-desc">Account codes used in mapping rules.</p>
-
-              <form className="coa-import-strip coa-form" onSubmit={saveCoaAccount}>
-                <input className="fi" placeholder="Code" value={coaForm.code} onChange={(event) => setCoaForm({ ...coaForm, code: event.target.value })} />
-                <input className="fi" placeholder="Account name" value={coaForm.name} onChange={(event) => setCoaForm({ ...coaForm, name: event.target.value })} />
-                <select className="fi" value={coaForm.type} onChange={(event) => setCoaForm({ ...coaForm, type: event.target.value as AccountType })}>
-                  <option value="asset">Asset</option>
-                  <option value="liability">Liability</option>
-                  <option value="equity">Equity</option>
-                  <option value="revenue">Revenue</option>
-                  <option value="expense">Expense</option>
-                </select>
-                <button className="btn btn-primary btn-sm" type="submit">Import Account</button>
-              </form>
-              {error ? <div className="form-error">{error}</div> : null}
-
-              <div className="table-card">
-                <table className="tbl">
-                  <thead>
-                    <tr><th>Code</th><th>Account Name</th><th>Type</th><th>Status</th></tr>
-                  </thead>
-                  <tbody>
-                    {accounts.map((account) => (
-                      <tr key={account.id}>
-                        <td className="mono">{account.code}</td>
-                        <td>{account.name}</td>
-                        <td>{accountTypeChip(account.type)}</td>
-                        <td><span className={`badge ${account.active ? 'active-rule' : 'failed'}`}>{account.active ? 'Active' : 'Inactive'}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <CsvCoaImportPanel accounts={accounts} onImport={importCoaFromCsv} />
           ) : settingsTab === 'adapters' ? (
             <AdapterSettingsPanel
               adapters={adapters}
@@ -2598,6 +2543,187 @@ function UsersSettingsPanel(props: {
           <button className="btn btn-primary" type="submit">Generate Key</button>
         </div>
       </form>
+    </div>
+  );
+}
+
+type CoaRow = { code: string; name: string; type: AccountType };
+type CoaParseResult = CoaRow | { error: string; raw: string };
+
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuote = !inQuote; }
+    else if (ch === ',' && !inQuote) { fields.push(current.trim()); current = ''; }
+    else { current += ch; }
+  }
+  fields.push(current.trim());
+  return fields;
+}
+
+function normalizeCoaType(raw: string): AccountType | null {
+  const t = raw.toLowerCase().trim();
+  if (t === 'asset' || t === 'assets') return 'asset';
+  if (t === 'liability' || t === 'liabilities') return 'liability';
+  if (t === 'equity') return 'equity';
+  if (t === 'income' || t === 'revenue') return 'revenue';
+  if (t === 'expense' || t === 'expenses' || t === 'cost of sales' || t === 'cost_of_sales') return 'expense';
+  return null;
+}
+
+function parseCoaCsv(text: string): CoaParseResult[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length === 0) return [];
+
+  const firstFields = parseCsvLine(lines[0] ?? '').map((f) => f.toLowerCase());
+  const hasHeader = firstFields.some((h) => h.includes('code') || h.includes('account') || h === 'type' || h === 'name' || h === 'class');
+
+  let codeIdx = 0, nameIdx = 1, typeIdx = 2;
+  const startIdx = hasHeader ? 1 : 0;
+
+  if (hasHeader) {
+    const ci = firstFields.findIndex((h) => h === 'account code' || h === 'code');
+    const ni = firstFields.findIndex((h) => h === 'account name' || h === 'name');
+    const ti = firstFields.findIndex((h) => h === 'class' || h === 'account type' || h === 'type');
+    if (ci >= 0) codeIdx = ci;
+    if (ni >= 0) nameIdx = ni;
+    if (ti >= 0) typeIdx = ti;
+  }
+
+  const results: CoaParseResult[] = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    const fields = parseCsvLine(lines[i] ?? '');
+    const code = fields[codeIdx]?.trim() ?? '';
+    const name = fields[nameIdx]?.trim() ?? '';
+    const rawType = fields[typeIdx]?.trim() ?? '';
+    if (!code || !name || !/^\d/.test(code)) continue;
+    const type = normalizeCoaType(rawType);
+    if (!type) { results.push({ error: `Unknown type "${rawType}"`, raw: lines[i] ?? '' }); continue; }
+    results.push({ code, name, type });
+  }
+  return results;
+}
+
+function CsvCoaImportPanel(props: {
+  accounts: ChartAccount[];
+  onImport: (rows: CoaRow[]) => Promise<void>;
+}) {
+  const { accounts, onImport } = props;
+  const [csvText, setCsvText] = useState('');
+  const [parsed, setParsed] = useState<CoaParseResult[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+
+  useEffect(() => {
+    setParsed(csvText.trim() ? parseCoaCsv(csvText) : []);
+  }, [csvText]);
+
+  function handleFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { setCsvText(reader.result as string); e.target.value = ''; };
+    reader.readAsText(file);
+  }
+
+  async function handleImport() {
+    const valid = parsed.filter((r): r is CoaRow => 'code' in r);
+    if (!valid.length) return;
+    setImporting(true);
+    setImportError('');
+    try {
+      await onImport(valid);
+      setCsvText('');
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const validRows = parsed.filter((r): r is CoaRow => 'code' in r);
+  const errorRows = parsed.filter((r): r is { error: string; raw: string } => 'error' in r);
+
+  return (
+    <div className="settings-panel active">
+      <h2>COA Reference</h2>
+      <p className="panel-desc">
+        Upload a CSV file or paste account data below. Supports a simple three-column format
+        (<code>code, name, type</code>) or a full export with a Class column where type is
+        Asset / Liability / Equity / Income / Cost of Sales / Expense.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', marginBottom: 'var(--s2)' }}>
+        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+          Choose CSV file
+          <input type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={handleFile} />
+        </label>
+        <span className="dim" style={{ fontSize: 'var(--text-sm)' }}>or paste CSV below</span>
+      </div>
+
+      <textarea
+        className="fi"
+        rows={5}
+        style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', resize: 'vertical' }}
+        placeholder={'code,name,type\n100030,Globus Bank (Collection),asset\n410010,AirVend | MTN Revenue,revenue\n199999,Suspense,asset'}
+        value={csvText}
+        onChange={(e) => setCsvText(e.target.value)}
+      />
+
+      {parsed.length > 0 && (
+        <div style={{ marginTop: 'var(--s3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', marginBottom: 'var(--s2)' }}>
+            <span style={{ fontSize: 'var(--text-sm)' }}>{validRows.length} account{validRows.length !== 1 ? 's' : ''} ready to import</span>
+            {errorRows.length > 0 && (
+              <span className="form-error" style={{ fontSize: 'var(--text-sm)' }}>{errorRows.length} row{errorRows.length !== 1 ? 's' : ''} skipped — unknown type</span>
+            )}
+            <button className="btn btn-primary btn-sm" onClick={handleImport} disabled={importing || !validRows.length} style={{ marginLeft: 'auto' }}>
+              {importing ? 'Importing…' : `Import ${validRows.length} account${validRows.length !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+          <div className="table-card" style={{ maxHeight: 240, overflow: 'auto' }}>
+            <table className="tbl">
+              <thead><tr><th>Code</th><th>Account Name</th><th>Type</th></tr></thead>
+              <tbody>
+                {validRows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="mono">{r.code}</td>
+                    <td>{r.name}</td>
+                    <td>{accountTypeChip(r.type)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {importError && <div className="form-error" style={{ marginTop: 'var(--s2)' }}>{importError}</div>}
+
+      <div style={{ marginTop: 'var(--s5)' }}>
+        <div className="config-section-title">Current Accounts ({accounts.length})</div>
+        <div className="table-card">
+          <table className="tbl">
+            <thead><tr><th>Code</th><th>Account Name</th><th>Type</th><th>Status</th></tr></thead>
+            <tbody>
+              {accounts.map((account) => (
+                <tr key={account.id}>
+                  <td className="mono">{account.code}</td>
+                  <td>{account.name}</td>
+                  <td>{accountTypeChip(account.type)}</td>
+                  <td><span className={`badge ${account.active ? 'active-rule' : 'failed'}`}>{account.active ? 'Active' : 'Inactive'}</span></td>
+                </tr>
+              ))}
+              {accounts.length === 0 && (
+                <tr><td colSpan={4} className="dim">No accounts imported yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
