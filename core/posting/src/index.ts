@@ -35,6 +35,8 @@ export interface JournalLogEntry {
   mappingRuleId?: string;
   mappingRuleVersion?: number;
   reversalOfJournalEntryId?: string;
+  entryOrder: number;
+  entryLabel?: string;
   generatedAt: string;
   postedAt?: string;
   lastPostingAttemptAt?: string;

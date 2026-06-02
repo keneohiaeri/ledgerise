@@ -22,6 +22,12 @@ export interface CreditSplit {
   percentageBps: number;
 }
 
+export interface JournalEntryTemplate {
+  label?: string;
+  debitAccountCode: string;
+  creditSplits: CreditSplit[];
+}
+
 export interface MappingRule {
   id: string;
   operatorId: string;
@@ -29,10 +35,10 @@ export interface MappingRule {
   biller?: string;
   billerCategory?: string;
   transactionType?: string;
-  debitAccountCode: string;
+  ruleType: 'simple' | 'compound';
+  entries: JournalEntryTemplate[];
   status: MappingRuleStatus;
   version: number;
-  creditSplits: CreditSplit[];
   createdAt: string;
   updatedAt: string;
 }
@@ -52,9 +58,9 @@ export interface NewMappingRule {
   biller?: string;
   billerCategory?: string;
   transactionType?: string;
-  debitAccountCode: string;
+  ruleType?: 'simple' | 'compound';
+  entries: JournalEntryTemplate[];
   status?: MappingRuleStatus;
-  creditSplits: CreditSplit[];
 }
 
 export interface UpdateMappingRule {
@@ -62,13 +68,15 @@ export interface UpdateMappingRule {
   biller?: string | null;
   billerCategory?: string | null;
   transactionType?: string | null;
-  debitAccountCode?: string;
-  creditSplits?: CreditSplit[];
+  ruleType?: 'simple' | 'compound';
+  entries?: JournalEntryTemplate[];
 }
 
 export interface MappingRepository {
   importChartAccounts(operatorId: string, accounts: NewChartAccount[]): Promise<ChartAccount[]>;
   listChartAccounts(operatorId: string): Promise<ChartAccount[]>;
+  updateChartAccount(operatorId: string, code: string, patch: { active: boolean }): Promise<ChartAccount | null>;
+  deleteChartAccount(operatorId: string, code: string): Promise<boolean>;
   createMappingRule(operatorId: string, input: NewMappingRule): Promise<MappingRule>;
   updateMappingRule(operatorId: string, ruleId: string, input: UpdateMappingRule): Promise<MappingRule | null>;
   setMappingRuleStatus(
@@ -103,6 +111,14 @@ export class MappingService {
     return this.repository.listChartAccounts(operatorId);
   }
 
+  updateChartAccount(operatorId: string, code: string, patch: { active: boolean }): Promise<ChartAccount | null> {
+    return this.repository.updateChartAccount(operatorId, code, patch);
+  }
+
+  deleteChartAccount(operatorId: string, code: string): Promise<boolean> {
+    return this.repository.deleteChartAccount(operatorId, code);
+  }
+
   createMappingRule(operatorId: string, input: NewMappingRule): Promise<MappingRule> {
     validateMappingRule(input);
     return this.repository.createMappingRule(operatorId, input);
@@ -123,9 +139,9 @@ export class MappingService {
         input.billerCategory === null ? undefined : input.billerCategory ?? existing.billerCategory,
       transactionType:
         input.transactionType === null ? undefined : input.transactionType ?? existing.transactionType,
-      debitAccountCode: input.debitAccountCode ?? existing.debitAccountCode,
-      status: existing.status,
-      creditSplits: input.creditSplits ?? existing.creditSplits
+      ruleType: input.ruleType ?? existing.ruleType,
+      entries: input.entries ?? existing.entries,
+      status: existing.status
     });
 
     return this.repository.updateMappingRule(operatorId, ruleId, input);
@@ -187,6 +203,21 @@ export class InMemoryMappingRepository implements MappingRepository {
     return this.accounts.filter((account) => account.operatorId === operatorId);
   }
 
+  async updateChartAccount(operatorId: string, code: string, patch: { active: boolean }): Promise<ChartAccount | null> {
+    const account = this.accounts.find((a) => a.operatorId === operatorId && a.code === code);
+    if (!account) return null;
+    account.active = patch.active;
+    account.updatedAt = new Date().toISOString();
+    return account;
+  }
+
+  async deleteChartAccount(operatorId: string, code: string): Promise<boolean> {
+    const index = this.accounts.findIndex((a) => a.operatorId === operatorId && a.code === code);
+    if (index === -1) return false;
+    this.accounts.splice(index, 1);
+    return true;
+  }
+
   async createMappingRule(operatorId: string, input: NewMappingRule): Promise<MappingRule> {
     const now = new Date().toISOString();
     const rule: MappingRule = {
@@ -196,10 +227,10 @@ export class InMemoryMappingRepository implements MappingRepository {
       biller: input.biller,
       billerCategory: input.billerCategory,
       transactionType: input.transactionType,
-      debitAccountCode: input.debitAccountCode,
+      ruleType: input.ruleType ?? 'simple',
+      entries: input.entries,
       status: input.status ?? 'active',
       version: 1,
-      creditSplits: input.creditSplits,
       createdAt: now,
       updatedAt: now
     };
@@ -217,8 +248,8 @@ export class InMemoryMappingRepository implements MappingRepository {
       input.billerCategory === null ? undefined : input.billerCategory ?? rule.billerCategory;
     rule.transactionType =
       input.transactionType === null ? undefined : input.transactionType ?? rule.transactionType;
-    rule.debitAccountCode = input.debitAccountCode ?? rule.debitAccountCode;
-    rule.creditSplits = input.creditSplits ?? rule.creditSplits;
+    rule.ruleType = input.ruleType ?? rule.ruleType;
+    rule.entries = input.entries ?? rule.entries;
     rule.version += 1;
     rule.updatedAt = new Date().toISOString();
     return rule;
@@ -260,16 +291,23 @@ function validateChartAccount(account: NewChartAccount, index: number): string[]
 function validateMappingRule(input: NewMappingRule): void {
   const errors: string[] = [];
   if (!input.productLine) errors.push('productLine is required');
-  if (!input.debitAccountCode) errors.push('debitAccountCode is required');
-  if (!input.creditSplits || input.creditSplits.length === 0) errors.push('creditSplits is required');
+  if (!input.entries || input.entries.length === 0) errors.push('entries is required');
 
-  const total = input.creditSplits?.reduce((sum, split) => sum + split.percentageBps, 0) ?? 0;
-  if (total !== 10000) errors.push('creditSplits must sum to 10000 basis points');
+  for (const [ei, entry] of (input.entries ?? []).entries()) {
+    const prefix = `entries.${ei}`;
+    if (!entry.debitAccountCode) errors.push(`${prefix}.debitAccountCode is required`);
+    if (!entry.creditSplits || entry.creditSplits.length === 0) {
+      errors.push(`${prefix}.creditSplits is required`);
+    }
 
-  for (const [index, split] of (input.creditSplits ?? []).entries()) {
-    if (!split.accountCode) errors.push(`creditSplits.${index}.accountCode is required`);
-    if (!Number.isInteger(split.percentageBps) || split.percentageBps <= 0) {
-      errors.push(`creditSplits.${index}.percentageBps must be a positive integer`);
+    const total = entry.creditSplits?.reduce((sum, split) => sum + split.percentageBps, 0) ?? 0;
+    if (total !== 10000) errors.push(`${prefix}.creditSplits must sum to 10000 basis points`);
+
+    for (const [si, split] of (entry.creditSplits ?? []).entries()) {
+      if (!split.accountCode) errors.push(`${prefix}.creditSplits.${si}.accountCode is required`);
+      if (!Number.isInteger(split.percentageBps) || split.percentageBps <= 0) {
+        errors.push(`${prefix}.creditSplits.${si}.percentageBps must be a positive integer`);
+      }
     }
   }
 

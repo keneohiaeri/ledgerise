@@ -109,11 +109,50 @@ cp .env.example .env
 
 Edit `.env` with your local configuration. The `.env.example` file documents every available variable.
 
+Add bootstrap admin credentials so the API creates your first user on startup:
+
+```env
+LEDGERISE_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+LEDGERISE_BOOTSTRAP_ADMIN_PASSWORD=changeme
+```
+
+These only need to be set once. After first login and password change the user is persisted in the database and these lines can be removed.
+
+### Run database migrations
+
+```bash
+for f in infra/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
+psql "$DATABASE_URL" -f infra/seed/0001_local_operator_and_adapters.sql
+psql "$DATABASE_URL" -f infra/seed/0002_default_coa.sql
+```
+
+All migration files are idempotent — safe to re-run.
+
 ### Run the development server
 
 ```bash
 npm run dev
 ```
+
+This starts the API (port 3000), web dashboard (port 3001), and worker together. The API dev script loads `.env` automatically via `--env-file`.
+
+**Postgres vs memory mode.** If `DATABASE_URL` is absent the API falls back to an in-memory repository — all data is lost on restart and login will fail. The health endpoint reveals which mode is active:
+
+```
+GET /api/health
+{"repository":"postgres","db":"ok"}   ← connected to database
+{"repository":"memory"}               ← no DATABASE_URL, in-memory only
+```
+
+### After changing core packages
+
+`tsx watch` hot-reloads `apps/api/src/index.ts` but does **not** watch compiled workspace packages. After editing anything in `core/` or `adapters/`, rebuild before the API picks up the changes:
+
+```bash
+npm run build
+```
+
+Then restart the API.
 
 ### Run tests
 

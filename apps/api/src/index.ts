@@ -1813,6 +1813,29 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
 
+  const coaAccountMatch = /^\/api\/coa\/([^/]+)$/.exec(url.pathname);
+  if (coaAccountMatch) {
+    const code = decodeURIComponent(coaAccountMatch[1] ?? '');
+    if (request.method === 'PATCH') {
+      if (!requireRole(dashboardPrincipal!, response, ['admin', 'finance'])) return;
+      const body = await readJsonBody(request);
+      if (!body.ok) { sendJson(response, 400, { status: 'error', code: 'MALFORMED_JSON', message: body.message }); return; }
+      const active = isRecord(body.value) && typeof body.value.active === 'boolean' ? body.value.active : null;
+      if (active === null) { sendJson(response, 400, { status: 'error', code: 'INVALID_BODY', message: 'Body must include active (boolean)' }); return; }
+      const updated = await mappingService.updateChartAccount(getOperatorId(request), code, { active });
+      if (!updated) { sendJson(response, 404, { status: 'error', code: 'NOT_FOUND', message: 'Account not found' }); return; }
+      sendJson(response, 200, { record: updated });
+      return;
+    }
+    if (request.method === 'DELETE') {
+      if (!requireRole(dashboardPrincipal!, response, ['admin', 'finance'])) return;
+      const deleted = await mappingService.deleteChartAccount(getOperatorId(request), code);
+      if (!deleted) { sendJson(response, 404, { status: 'error', code: 'NOT_FOUND', message: 'Account not found' }); return; }
+      sendJson(response, 200, { status: 'ok' });
+      return;
+    }
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/mapping-rules') {
     sendJson(response, 200, {
       records: await mappingService.listMappingRules(getOperatorId(request))
@@ -2462,6 +2485,8 @@ function toEngineEntryResponse(entry: EngineJournalEntry) {
     currency: entry.currency,
     amount: entry.amount,
     mapping_rule_id: entry.mappingRuleId,
+    entry_order: entry.entryOrder,
+    entry_label: entry.entryLabel,
     generated_at: entry.generatedAt,
     lines: entry.lines.map((line) => ({
       account_code: line.accountCode,
@@ -2501,6 +2526,8 @@ function toJournalEntryResponse(entry: JournalLogEntry) {
     mapping_rule_id: entry.mappingRuleId,
     mapping_rule_version: entry.mappingRuleVersion,
     reversal_of_journal_entry_id: entry.reversalOfJournalEntryId,
+    entry_order: entry.entryOrder,
+    entry_label: entry.entryLabel,
     generated_at: entry.generatedAt,
     posted_at: entry.postedAt,
     last_posting_attempt_at: entry.lastPostingAttemptAt,
@@ -2856,10 +2883,9 @@ function toMappingRuleInput(input: unknown): NewMappingRule {
     biller: readString(input, 'biller'),
     billerCategory: readString(input, 'biller_category') ?? readString(input, 'billerCategory'),
     transactionType: readString(input, 'transaction_type') ?? readString(input, 'transactionType'),
-    debitAccountCode:
-      readString(input, 'debit_account_code') ?? readString(input, 'debitAccountCode') ?? '',
-    status: readString(input, 'status') === 'inactive' ? 'inactive' : 'active',
-    creditSplits: readCreditSplits(input)
+    ruleType: readRuleType(input),
+    entries: readEntries(input),
+    status: readString(input, 'status') === 'inactive' ? 'inactive' : 'active'
   };
 }
 
@@ -2875,26 +2901,40 @@ function toMappingRuleUpdateInput(input: unknown): UpdateMappingRule {
       readNullableString(input, 'biller_category') ?? readNullableString(input, 'billerCategory'),
     transactionType:
       readNullableString(input, 'transaction_type') ?? readNullableString(input, 'transactionType'),
-    debitAccountCode:
-      readString(input, 'debit_account_code') ?? readString(input, 'debitAccountCode'),
-    creditSplits: Array.isArray(input.credit_splits) || Array.isArray(input.creditSplits)
-      ? readCreditSplits(input)
-      : undefined
+    ruleType: readRuleType(input),
+    entries: Array.isArray(input.entries) ? readEntries(input) : undefined
   };
 }
 
-function readCreditSplits(input: Record<string, unknown>): NewMappingRule['creditSplits'] {
+function readRuleType(input: Record<string, unknown>): 'simple' | 'compound' {
+  const raw = readString(input, 'rule_type') ?? readString(input, 'ruleType');
+  return raw === 'compound' ? 'compound' : 'simple';
+}
+
+function readEntries(input: Record<string, unknown>): NewMappingRule['entries'] {
+  const raw = input.entries;
+  if (!Array.isArray(raw)) return [];
+
+  return raw.map((item) => {
+    if (!isRecord(item)) return { debitAccountCode: '', creditSplits: [] };
+    return {
+      label: readString(item, 'label'),
+      debitAccountCode:
+        readString(item, 'debit_account_code') ?? readString(item, 'debitAccountCode') ?? '',
+      creditSplits: readCreditSplits(item)
+    };
+  });
+}
+
+function readCreditSplits(input: Record<string, unknown>): Array<{ accountCode: string; percentageBps: number }> {
   const raw = input.credit_splits ?? input.creditSplits;
   if (!Array.isArray(raw)) return [];
 
   return raw.map((split) => {
-    if (!isRecord(split)) {
-      return { accountCode: '', percentageBps: 0 };
-    }
+    if (!isRecord(split)) return { accountCode: '', percentageBps: 0 };
     return {
       accountCode: readString(split, 'account_code') ?? readString(split, 'accountCode') ?? '',
-      percentageBps:
-        readNumber(split, 'percentage_bps') ?? readNumber(split, 'percentageBps') ?? 0
+      percentageBps: readNumber(split, 'percentage_bps') ?? readNumber(split, 'percentageBps') ?? 0
     };
   });
 }

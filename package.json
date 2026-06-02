@@ -11,6 +11,8 @@
     "adapters/outbound/*"
   ],
   "scripts": {
+    "start": "node apps/api/dist/index.js",
+    "start:web": "npm start -w apps/web",
     "dev": "npm run dev --workspaces --if-present",
     "dev:web": "npm run dev -w apps/web",
     "dev:api": "npm run dev -w apps/api",

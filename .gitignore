@@ -9,8 +9,14 @@ dist/
 
 demo/IA.md
 
+# Operator-specific seed data — not part of the open-source distribution
+infra/seed/0003_*.sql
+infra/seed/0004_*.sql
+infra/seed/0005_*.sql
+
 docs/IMPLEMENTATION_PLAN.md
 docs/DEVELOPMENT_TODO.md
+docs/COMPOUND_RULES_UPGRADE.md
 docs/COA_REFERENCE.xlsx
 docs/PRD*.md
 docs/AI_AGENT_HANDOFF.md

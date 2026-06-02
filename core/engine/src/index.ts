@@ -32,6 +32,8 @@ export interface JournalEntry {
   mappingRuleId?: string;
   mappingRuleVersion?: number;
   reversalOfJournalEntryId?: string;
+  entryOrder: number;
+  entryLabel?: string;
   generatedAt: string;
   lines: JournalEntryLine[];
 }
@@ -46,6 +48,8 @@ export interface NewJournalEntry {
   mappingRuleId?: string;
   mappingRuleVersion?: number;
   reversalOfJournalEntryId?: string;
+  entryOrder: number;
+  entryLabel?: string;
   generatedAt: string;
   lines: JournalEntryLine[];
 }
@@ -60,7 +64,11 @@ export interface JournalEngineRepository {
     operatorId: string;
     transactionId: string;
   }): Promise<JournalEntry | null>;
-  saveJournalEntry(input: NewJournalEntry): Promise<JournalEntry>;
+  findJournalEntriesForTransaction(input: {
+    operatorId: string;
+    transactionId: string;
+  }): Promise<JournalEntry[]>;
+  saveJournalEntries(inputs: NewJournalEntry[]): Promise<JournalEntry[]>;
 }
 
 export interface JournalEngineOptions {
@@ -138,18 +146,22 @@ export class JournalEngineService {
         continue;
       }
 
-      const entryInput =
+      const entryInputs =
         transaction.record.status === 'reversed'
-          ? await this.buildReversalEntry(transaction)
-          : this.buildStandardEntry(transaction, resolveMapping(transaction.record, rules));
+          ? await this.buildReversalEntries(transaction)
+          : this.buildStandardEntries(transaction, resolveMapping(transaction.record, rules));
 
-      if (!entryInput) {
+      if (!entryInputs) {
         skipped.push({ transactionId: transaction.id, reason: 'reversal_original_missing' });
         continue;
       }
 
-      assertBalanced(entryInput.lines);
-      entries.push(await this.repository.saveJournalEntry(entryInput));
+      for (const entryInput of entryInputs) {
+        assertBalanced(entryInput.lines);
+      }
+
+      const saved = await this.repository.saveJournalEntries(entryInputs);
+      entries.push(...saved);
     }
 
     return {
@@ -160,20 +172,21 @@ export class JournalEngineService {
     };
   }
 
-  private buildStandardEntry(
+  private buildStandardEntries(
     transaction: EngineTransaction,
     mapping: ResolvedMapping
-  ): NewJournalEntry {
+  ): NewJournalEntry[] {
     const record = transaction.record;
 
     if (mapping.status === 'unmapped') {
-      return {
+      return [{
         operatorId: transaction.operatorId,
         transactionId: transaction.id,
         entryType: 'unmapped',
         status: 'unmapped',
         currency: record.currency,
         amount: record.amount,
+        entryOrder: 1,
         generatedAt: this.now(),
         lines: [
           {
@@ -191,62 +204,66 @@ export class JournalEngineService {
             lineOrder: 2
           }
         ]
-      };
+      }];
     }
 
-    return {
+    return mapping.rule.entries.map((entry, index) => ({
       operatorId: transaction.operatorId,
       transactionId: transaction.id,
-      entryType: 'standard',
-      status: 'generated',
+      entryType: 'standard' as const,
+      status: 'generated' as const,
       currency: record.currency,
       amount: record.amount,
       mappingRuleId: mapping.rule.id,
       mappingRuleVersion: mapping.rule.version,
+      entryOrder: index + 1,
+      entryLabel: entry.label,
       generatedAt: this.now(),
       lines: [
         {
-          accountCode: mapping.rule.debitAccountCode,
-          side: 'debit',
+          accountCode: entry.debitAccountCode,
+          side: 'debit' as const,
           amount: record.amount,
           currency: record.currency,
           lineOrder: 1
         },
-        ...allocateCreditSplits(mapping.rule, record.amount, record.currency, 2)
+        ...allocateCreditSplits(entry, record.amount, record.currency, 2)
       ]
-    };
+    }));
   }
 
-  private async buildReversalEntry(
+  private async buildReversalEntries(
     transaction: EngineTransaction
-  ): Promise<NewJournalEntry | null> {
+  ): Promise<NewJournalEntry[] | null> {
     const originalTransactionId = transaction.record.reversal_of;
     if (!originalTransactionId) return null;
 
-    const originalEntry = await this.repository.findJournalEntryByTransactionId({
+    const originalEntries = await this.repository.findJournalEntriesForTransaction({
       operatorId: transaction.operatorId,
       transactionId: originalTransactionId
     });
 
-    if (!originalEntry) return null;
+    if (originalEntries.length === 0) return null;
 
-    return {
+    return originalEntries.map((original) => ({
       operatorId: transaction.operatorId,
       transactionId: transaction.id,
-      entryType: 'reversal',
-      status: 'generated',
+      entryType: 'reversal' as const,
+      status: 'generated' as const,
       currency: transaction.record.currency,
-      amount: originalEntry.amount,
-      reversalOfJournalEntryId: originalEntry.id,
+      amount: original.amount,
+      reversalOfJournalEntryId: original.id,
+      entryOrder: original.entryOrder,
+      entryLabel: original.entryLabel,
       generatedAt: this.now(),
-      lines: originalEntry.lines.map((line, index) => ({
+      lines: original.lines.map((line, index) => ({
         accountCode: line.accountCode,
-        side: line.side === 'debit' ? 'credit' : 'debit',
+        side: line.side === 'debit' ? 'credit' : 'debit' as const,
         amount: line.amount,
         currency: line.currency,
         lineOrder: index + 1
       }))
-    };
+    }));
   }
 }
 
@@ -281,19 +298,32 @@ export class InMemoryJournalEngineRepository implements JournalEngineRepository 
     );
   }
 
-  async saveJournalEntry(input: NewJournalEntry): Promise<JournalEntry> {
-    const existing = await this.findJournalEntryByTransactionId({
-      operatorId: input.operatorId,
-      transactionId: input.transactionId
-    });
-    if (existing) return existing;
+  async findJournalEntriesForTransaction(input: {
+    operatorId: string;
+    transactionId: string;
+  }): Promise<JournalEntry[]> {
+    return this.entries
+      .filter((e) => e.operatorId === input.operatorId && e.transactionId === input.transactionId)
+      .sort((a, b) => a.entryOrder - b.entryOrder);
+  }
 
-    const entry: JournalEntry = {
-      id: randomUUID(),
-      ...input
-    };
-    this.entries.push(entry);
-    return entry;
+  async saveJournalEntries(inputs: NewJournalEntry[]): Promise<JournalEntry[]> {
+    const saved: JournalEntry[] = [];
+    for (const input of inputs) {
+      const existing = this.entries.find(
+        (e) => e.operatorId === input.operatorId &&
+               e.transactionId === input.transactionId &&
+               e.entryOrder === input.entryOrder
+      );
+      if (existing) {
+        saved.push(existing);
+        continue;
+      }
+      const entry: JournalEntry = { id: randomUUID(), ...input };
+      this.entries.push(entry);
+      saved.push(entry);
+    }
+    return saved;
   }
 }
 
@@ -316,8 +346,8 @@ export function resolveMapping(
 
   for (const rule of rules) {
     if (rule.status !== 'active') continue;
-    if (rule.productLine !== record.product.line) continue;
-    if (rule.transactionType && rule.transactionType !== record.type) continue;
+    if (rule.productLine.toLowerCase() !== record.product.line.toLowerCase()) continue;
+    if (rule.transactionType && rule.transactionType.toLowerCase() !== record.type.toLowerCase()) continue;
 
     const priority = mappingPriority(rule, record);
     if (priority === null) continue;
@@ -343,23 +373,23 @@ export function resolveMapping(
 }
 
 function mappingPriority(rule: MappingRule, record: CanonicalTransaction): 1 | 2 | 3 | null {
-  if (rule.biller) return rule.biller === record.product.biller ? 1 : null;
+  if (rule.biller) return rule.biller.toLowerCase() === record.product.biller?.toLowerCase() ? 1 : null;
   if (rule.billerCategory) {
-    return rule.billerCategory === record.product.biller_category ? 2 : null;
+    return rule.billerCategory.toLowerCase() === record.product.biller_category?.toLowerCase() ? 2 : null;
   }
   return 3;
 }
 
 function allocateCreditSplits(
-  rule: MappingRule,
+  entry: { creditSplits: Array<{ accountCode: string; percentageBps: number }> },
   amount: number,
   currency: string,
   firstLineOrder: number
 ): JournalEntryLine[] {
   let allocated = 0;
 
-  return rule.creditSplits.map((split, index) => {
-    const isLast = index === rule.creditSplits.length - 1;
+  return entry.creditSplits.map((split, index) => {
+    const isLast = index === entry.creditSplits.length - 1;
     const splitAmount = isLast
       ? amount - allocated
       : Math.floor((amount * split.percentageBps) / 10000);

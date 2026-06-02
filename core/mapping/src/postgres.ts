@@ -2,6 +2,7 @@ import pg from 'pg';
 
 import {
   type ChartAccount,
+  type JournalEntryTemplate,
   type MappingRepository,
   type MappingRule,
   type MappingRuleStatus,
@@ -38,12 +39,12 @@ interface MappingRuleRow {
   biller: string | null;
   biller_category: string | null;
   transaction_type: string | null;
-  debit_account_code: string;
+  rule_type: 'simple' | 'compound';
+  entries: unknown;
   status: MappingRuleStatus;
   version: number;
   created_at: Date | string;
   updated_at: Date | string;
-  credit_splits: unknown;
 }
 
 export class PostgresMappingRepository implements MappingRepository {
@@ -67,6 +68,17 @@ export class PostgresMappingRepository implements MappingRepository {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Deactivate all existing accounts not present in the import — full replacement behaviour
+      const incomingCodes = accounts.map((a) => a.code);
+      if (incomingCodes.length > 0) {
+        await client.query(
+          `UPDATE chart_of_accounts SET active = false, updated_at = now()
+           WHERE operator_id = $1 AND code != ALL($2::text[])`,
+          [operatorId, incomingCodes]
+        );
+      }
+
       const imported: ChartAccount[] = [];
       for (const account of accounts) {
         const result = await client.query<ChartAccountRow>(
@@ -114,6 +126,27 @@ export class PostgresMappingRepository implements MappingRepository {
     return result.rows.map(toChartAccount);
   }
 
+  async updateChartAccount(operatorId: string, code: string, patch: { active: boolean }): Promise<ChartAccount | null> {
+    const result = await this.pool.query<ChartAccountRow>(
+      `
+        UPDATE chart_of_accounts
+        SET active = $3, updated_at = now()
+        WHERE operator_id = $1 AND code = $2
+        RETURNING id, operator_id, code, name, type, sub_category, currency, parent_code, active, created_at, updated_at
+      `,
+      [operatorId, code, patch.active]
+    );
+    return result.rows[0] ? toChartAccount(result.rows[0]) : null;
+  }
+
+  async deleteChartAccount(operatorId: string, code: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `DELETE FROM chart_of_accounts WHERE operator_id = $1 AND code = $2`,
+      [operatorId, code]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async createMappingRule(operatorId: string, input: NewMappingRule): Promise<MappingRule> {
     const client = await this.pool.connect();
     try {
@@ -122,9 +155,9 @@ export class PostgresMappingRepository implements MappingRepository {
         `
           INSERT INTO mapping_rules (
             operator_id, product_line, biller, biller_category, transaction_type,
-            debit_account_code, status
+            rule_type, entries, status
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           RETURNING ${mappingRuleSelectColumns}
         `,
         [
@@ -133,15 +166,13 @@ export class PostgresMappingRepository implements MappingRepository {
           input.biller ?? null,
           input.billerCategory ?? null,
           input.transactionType ?? null,
-          input.debitAccountCode,
+          input.ruleType ?? 'simple',
+          JSON.stringify(input.entries),
           input.status ?? 'active'
         ]
       );
-      const base = ruleResult.rows[0];
-      if (!base) throw new Error('Failed to create mapping rule');
-      await replaceCreditSplits(client, operatorId, base.id, input.creditSplits);
-      const rule = await findRuleById(client, operatorId, base.id);
-      if (!rule) throw new Error('Failed to reload mapping rule');
+      const rule = ruleResult.rows[0] ? toMappingRule(ruleResult.rows[0]) : null;
+      if (!rule) throw new Error('Failed to create mapping rule');
       await recordVersionAndAudit(client, rule, 'mapping_rule.created', null, rule);
       await client.query('COMMIT');
       return rule;
@@ -165,13 +196,14 @@ export class PostgresMappingRepository implements MappingRepository {
       await client.query(
         `
           UPDATE mapping_rules SET
-            product_line = COALESCE($3, product_line),
-            biller = CASE WHEN $4 THEN NULL ELSE COALESCE($5, biller) END,
+            product_line    = COALESCE($3, product_line),
+            biller          = CASE WHEN $4 THEN NULL ELSE COALESCE($5, biller) END,
             biller_category = CASE WHEN $6 THEN NULL ELSE COALESCE($7, biller_category) END,
             transaction_type = CASE WHEN $8 THEN NULL ELSE COALESCE($9, transaction_type) END,
-            debit_account_code = COALESCE($10, debit_account_code),
-            version = version + 1,
-            updated_at = now()
+            rule_type       = COALESCE($10, rule_type),
+            entries         = COALESCE($11, entries),
+            version         = version + 1,
+            updated_at      = now()
           WHERE operator_id = $1 AND id = $2
         `,
         [
@@ -184,10 +216,10 @@ export class PostgresMappingRepository implements MappingRepository {
           input.billerCategory ?? null,
           input.transactionType === null,
           input.transactionType ?? null,
-          input.debitAccountCode ?? null
+          input.ruleType ?? null,
+          input.entries ? JSON.stringify(input.entries) : null
         ]
       );
-      if (input.creditSplits) await replaceCreditSplits(client, operatorId, ruleId, input.creditSplits);
       const after = await findRuleById(client, operatorId, ruleId);
       if (!after) throw new Error('Failed to reload mapping rule');
       await recordVersionAndAudit(client, after, 'mapping_rule.updated', before, after);
@@ -260,46 +292,13 @@ const mappingRuleSelectColumns = `
   biller,
   biller_category,
   transaction_type,
-  debit_account_code,
+  rule_type,
+  entries,
   status,
   version,
   created_at,
-  updated_at,
-  (
-    SELECT COALESCE(
-      jsonb_agg(
-        jsonb_build_object(
-          'accountCode', account_code,
-          'percentageBps', percentage_bps
-        )
-        ORDER BY account_code
-      ),
-      '[]'::jsonb
-    )
-    FROM mapping_rule_credit_splits
-    WHERE mapping_rule_credit_splits.mapping_rule_id = mapping_rules.id
-  ) AS credit_splits
+  updated_at
 `;
-
-async function replaceCreditSplits(
-  client: pg.PoolClient,
-  operatorId: string,
-  ruleId: string,
-  splits: NewMappingRule['creditSplits']
-) {
-  await client.query('DELETE FROM mapping_rule_credit_splits WHERE mapping_rule_id = $1', [ruleId]);
-  for (const split of splits) {
-    await client.query(
-      `
-        INSERT INTO mapping_rule_credit_splits (
-          mapping_rule_id, operator_id, account_code, percentage_bps
-        )
-        VALUES ($1, $2, $3, $4)
-      `,
-      [ruleId, operatorId, split.accountCode, split.percentageBps]
-    );
-  }
-}
 
 async function findRuleById(
   queryable: pg.Pool | pg.PoolClient,
@@ -367,18 +366,28 @@ function toMappingRule(row: MappingRuleRow): MappingRule {
     biller: row.biller ?? undefined,
     billerCategory: row.biller_category ?? undefined,
     transactionType: row.transaction_type ?? undefined,
-    debitAccountCode: row.debit_account_code,
+    ruleType: row.rule_type,
+    entries: parseEntries(row.entries),
     status: row.status,
     version: row.version,
-    creditSplits: Array.isArray(row.credit_splits)
-      ? row.credit_splits.map((split) => {
-          const item = split as { accountCode: string; percentageBps: number };
-          return { accountCode: item.accountCode, percentageBps: item.percentageBps };
-        })
-      : [],
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at)
   };
+}
+
+function parseEntries(value: unknown): JournalEntryTemplate[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const e = item as { label?: string; debitAccountCode: string; creditSplits: Array<{ accountCode: string; percentageBps: number }> };
+    return {
+      label: e.label,
+      debitAccountCode: e.debitAccountCode,
+      creditSplits: (e.creditSplits ?? []).map((s) => ({
+        accountCode: s.accountCode,
+        percentageBps: s.percentageBps
+      }))
+    };
+  });
 }
 
 function toIsoString(value: Date | string): string {

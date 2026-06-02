@@ -22,15 +22,27 @@ interface CreditSplit {
   percentageBps: number;
 }
 
+interface JournalEntryTemplate {
+  label?: string;
+  debitAccountCode: string;
+  creditSplits: CreditSplit[];
+}
+
 interface MappingRule {
   id: string;
   productLine: string;
   biller?: string;
   billerCategory?: string;
   transactionType?: string;
-  debitAccountCode: string;
+  ruleType: 'simple' | 'compound';
+  entries: JournalEntryTemplate[];
   status: 'active' | 'inactive';
   version: number;
+}
+
+interface EntryFormState {
+  label: string;
+  debitAccountCode: string;
   creditSplits: CreditSplit[];
 }
 
@@ -78,6 +90,8 @@ interface JournalEntry {
   amount: number;
   mapping_rule_id?: string;
   mapping_rule_version?: number;
+  entry_order: number;
+  entry_label?: string;
   generated_at: string;
   posted_at?: string;
   last_posting_attempt_at?: string;
@@ -260,8 +274,8 @@ interface RuleFormState {
   biller: string;
   billerCategory: string;
   transactionType: string;
-  debitAccountCode: string;
-  creditSplits: CreditSplit[];
+  ruleType: 'simple' | 'compound';
+  entries: EntryFormState[];
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
@@ -514,8 +528,8 @@ const emptyRuleForm: RuleFormState = {
   biller: '',
   billerCategory: '',
   transactionType: '',
-  debitAccountCode: '',
-  creditSplits: [{ accountCode: '', percentageBps: 10000 }]
+  ruleType: 'simple',
+  entries: [{ label: '', debitAccountCode: '', creditSplits: [{ accountCode: '', percentageBps: 10000 }] }]
 };
 
 export function App() {
@@ -600,10 +614,37 @@ export function App() {
   const inactiveRules = rules.filter((rule) => rule.status === 'inactive');
   const productLineCount = new Set(rules.map((rule) => rule.productLine)).size;
 
-  const creditSplitTotal = useMemo(
-    () => ruleForm.creditSplits.reduce((sum, split) => sum + Number(split.percentageBps || 0), 0),
-    [ruleForm.creditSplits]
+  const entryCreditTotals = useMemo(
+    () => ruleForm.entries.map((entry) =>
+      entry.creditSplits.reduce((sum, split) => sum + Number(split.percentageBps || 0), 0)
+    ),
+    [ruleForm.entries]
   );
+
+  const fieldSuggestions = useMemo(() => {
+    const productLines = new Set<string>();
+    const billers = new Set<string>();
+    const billerCategories = new Set<string>();
+    const transactionTypes = new Set<string>();
+    for (const t of transactions) {
+      if (t.product.line) productLines.add(t.product.line);
+      if (t.product.biller) billers.add(t.product.biller);
+      if (t.product.biller_category) billerCategories.add(t.product.biller_category);
+      if (t.type) transactionTypes.add(t.type);
+    }
+    for (const r of rules) {
+      if (r.productLine) productLines.add(r.productLine);
+      if (r.biller) billers.add(r.biller);
+      if (r.billerCategory) billerCategories.add(r.billerCategory);
+      if (r.transactionType) transactionTypes.add(r.transactionType);
+    }
+    return {
+      productLines: [...productLines].sort(),
+      billers: [...billers].sort(),
+      billerCategories: [...billerCategories].sort(),
+      transactionTypes: [...transactionTypes].sort(),
+    };
+  }, [transactions, rules]);
 
   function clearAuthSession() {
     localStorage.removeItem(authTokenStorageKey);
@@ -706,6 +747,26 @@ export function App() {
     }
   }
 
+  async function toggleCoaAccount(code: string, active: boolean) {
+    setError('');
+    try {
+      const result = await apiPatch<{ record: ChartAccount }>(`/api/coa/${encodeURIComponent(code)}`, { active });
+      setAccounts((prev) => prev.map((a) => a.code === code ? result.record : a));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Failed to update account');
+    }
+  }
+
+  async function deleteCoaAccount(code: string) {
+    setError('');
+    try {
+      await apiRequest(`/api/coa/${encodeURIComponent(code)}`, { method: 'DELETE' });
+      setAccounts((prev) => prev.filter((a) => a.code !== code));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Failed to delete account');
+    }
+  }
+
   async function importCoaFromCsv(rows: CoaRow[]) {
     const result = await apiPost<{ records: ChartAccount[] }>('/api/coa/import', { accounts: rows });
     setAccounts((prev) => {
@@ -720,8 +781,8 @@ export function App() {
     event.preventDefault();
     setError('');
 
-    if (creditSplitTotal !== 10000) {
-      setError('Credit splits must sum to 100%.');
+    if (entryCreditTotals.some((total) => total !== 10000)) {
+      setError('All entries must have credit splits summing to 100%.');
       return;
     }
 
@@ -730,10 +791,14 @@ export function App() {
       biller: ruleForm.biller || undefined,
       biller_category: ruleForm.billerCategory || undefined,
       transaction_type: ruleForm.transactionType || undefined,
-      debit_account_code: ruleForm.debitAccountCode,
-      credit_splits: ruleForm.creditSplits.map((split) => ({
-        account_code: split.accountCode,
-        percentage_bps: Number(split.percentageBps)
+      rule_type: ruleForm.ruleType,
+      entries: ruleForm.entries.map((entry) => ({
+        label: entry.label || undefined,
+        debit_account_code: entry.debitAccountCode,
+        credit_splits: entry.creditSplits.map((split) => ({
+          account_code: split.accountCode,
+          percentage_bps: Number(split.percentageBps)
+        }))
       }))
     };
 
@@ -800,11 +865,16 @@ export function App() {
       biller: rule.biller ?? '',
       billerCategory: rule.billerCategory ?? '',
       transactionType: rule.transactionType ?? '',
-      debitAccountCode: rule.debitAccountCode,
-      creditSplits:
-        rule.creditSplits.length > 0
-          ? rule.creditSplits
-          : [{ accountCode: '', percentageBps: 10000 }]
+      ruleType: rule.ruleType,
+      entries: rule.entries.length > 0
+        ? rule.entries.map((e) => ({
+            label: e.label ?? '',
+            debitAccountCode: e.debitAccountCode,
+            creditSplits: e.creditSplits.length > 0
+              ? e.creditSplits
+              : [{ accountCode: '', percentageBps: 10000 }]
+          }))
+        : [{ label: '', debitAccountCode: '', creditSplits: [{ accountCode: '', percentageBps: 10000 }] }]
     });
     setRuleDrawerOpen(true);
   }
@@ -819,19 +889,43 @@ export function App() {
     setRuleDrawerOpen(false);
   }
 
-  function updateSplit(index: number, patch: Partial<CreditSplit>) {
+  function updateSplit(entryIndex: number, splitIndex: number, patch: Partial<CreditSplit>) {
     setRuleForm((current) => ({
       ...current,
-      creditSplits: current.creditSplits.map((split, splitIndex) =>
-        splitIndex === index ? { ...split, ...patch } : split
+      entries: current.entries.map((entry, ei) =>
+        ei !== entryIndex ? entry : {
+          ...entry,
+          creditSplits: entry.creditSplits.map((split, si) =>
+            si === splitIndex ? { ...split, ...patch } : split
+          )
+        }
       )
     }));
   }
 
-  function removeSplit(index: number) {
+  function removeSplit(entryIndex: number, splitIndex: number) {
     setRuleForm((current) => ({
       ...current,
-      creditSplits: current.creditSplits.filter((_, splitIndex) => splitIndex !== index)
+      entries: current.entries.map((entry, ei) =>
+        ei !== entryIndex ? entry : {
+          ...entry,
+          creditSplits: entry.creditSplits.filter((_, si) => si !== splitIndex)
+        }
+      )
+    }));
+  }
+
+  function addEntry() {
+    setRuleForm((current) => ({
+      ...current,
+      entries: [...current.entries, { label: '', debitAccountCode: '', creditSplits: [{ accountCode: '', percentageBps: 10000 }] }]
+    }));
+  }
+
+  function removeEntry(entryIndex: number) {
+    setRuleForm((current) => ({
+      ...current,
+      entries: current.entries.filter((_, ei) => ei !== entryIndex)
     }));
   }
 
@@ -1093,7 +1187,8 @@ export function App() {
             error={error}
             ruleForm={ruleForm}
             ruleDrawerOpen={ruleDrawerOpen}
-            creditSplitTotal={creditSplitTotal}
+            entryCreditTotals={entryCreditTotals}
+            fieldSuggestions={fieldSuggestions}
             setRuleForm={setRuleForm}
             saveRule={saveRule}
             openNewRule={openNewRule}
@@ -1102,6 +1197,8 @@ export function App() {
             toggleRule={toggleRule}
             updateSplit={updateSplit}
             removeSplit={removeSplit}
+            addEntry={addEntry}
+            removeEntry={removeEntry}
           />
         ) : null}
         {screen === 'settings' ? (
@@ -1113,6 +1210,8 @@ export function App() {
             adapters={adapters}
             pollStatuses={pollStatuses}
             importCoaFromCsv={importCoaFromCsv}
+            toggleCoaAccount={toggleCoaAccount}
+            deleteCoaAccount={deleteCoaAccount}
             createApiKey={createApiKey}
             currentUserRole={authUser?.role ?? 'finance'}
             inviteUser={inviteUser}
@@ -1410,7 +1509,11 @@ function TransactionDrawer(props: {
   closeTransactionDrawer: () => void;
 }) {
   const { journalEntries, mapTransaction, openTransactionJournal, transaction, closeTransactionDrawer } = props;
-  const journalEntry = journalEntries.find((entry) => entry.transaction_id === transaction.id);
+  const transactionEntries = journalEntries
+    .filter((entry) => entry.transaction_id === transaction.id)
+    .sort((a, b) => a.entry_order - b.entry_order);
+  const journalEntry = transactionEntries[0] ?? null;
+  const isCompound = transactionEntries.length > 1;
   const journalStatus = transactionJournalStatus(transaction, journalEntries);
 
   return (
@@ -1452,19 +1555,38 @@ function TransactionDrawer(props: {
         </div>
 
         <div className="drawer-section">
-          <div className="drawer-section-title">Journal Entry</div>
-          {journalEntry ? (
-            <div className="drawer-grid">
-              <DetailField label="Journal ID" value={shortId(journalEntry.id)} mono />
-              <DetailField label="Posting Status" value={formatStatusLabel(journalEntry.posting_status)} />
-              <DetailField label="Entry Type" value={journalEntry.entry_type} />
-              <DetailField label="Generated At" value={formatDateTime(journalEntry.generated_at)} />
-              <DetailField
-                label="Rule Applied"
-                value={journalEntry.mapping_rule_id ? `${shortId(journalEntry.mapping_rule_id)} · v${journalEntry.mapping_rule_version ?? 1}` : 'No rule matched - suspense'}
-                mono={Boolean(journalEntry.mapping_rule_id)}
-              />
-            </div>
+          <div className="drawer-section-title">{isCompound ? `Journal Entries (${transactionEntries.length})` : 'Journal Entry'}</div>
+          {transactionEntries.length > 0 ? (
+            isCompound ? (
+              <div className="compound-journal-entries">
+                {transactionEntries.map((entry) => (
+                  <div key={entry.id} className="compound-journal-block">
+                    <div className="compound-journal-block-header">
+                      <span className="compound-entry-num">
+                        Entry {entry.entry_order}{entry.entry_label ? ` — ${entry.entry_label}` : ''}
+                      </span>
+                      <span className={`badge ${postingBadgeClass(entry.posting_status)}`}>{formatStatusLabel(entry.posting_status)}</span>
+                    </div>
+                    <div className="drawer-grid">
+                      <DetailField label="Journal ID" value={shortId(entry.id)} mono />
+                      <DetailField label="Generated At" value={formatDateTime(entry.generated_at)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="drawer-grid">
+                <DetailField label="Journal ID" value={shortId(journalEntry!.id)} mono />
+                <DetailField label="Posting Status" value={formatStatusLabel(journalEntry!.posting_status)} />
+                <DetailField label="Entry Type" value={journalEntry!.entry_type} />
+                <DetailField label="Generated At" value={formatDateTime(journalEntry!.generated_at)} />
+                <DetailField
+                  label="Rule Applied"
+                  value={journalEntry!.mapping_rule_id ? `${shortId(journalEntry!.mapping_rule_id)} · v${journalEntry!.mapping_rule_version ?? 1}` : 'No rule matched - suspense'}
+                  mono={Boolean(journalEntry!.mapping_rule_id)}
+                />
+              </div>
+            )
           ) : transaction.source.environment === 'test' ? (
             <span className="badge test-env">Test env - blocked from posting</span>
           ) : transaction.status !== 'settled' && transaction.status !== 'reversed' ? (
@@ -1501,15 +1623,18 @@ function MappingRulesView(props: {
   error: string;
   ruleForm: RuleFormState;
   ruleDrawerOpen: boolean;
-  creditSplitTotal: number;
+  entryCreditTotals: number[];
+  fieldSuggestions: { productLines: string[]; billers: string[]; billerCategories: string[]; transactionTypes: string[] };
   setRuleForm: (updater: RuleFormState | ((current: RuleFormState) => RuleFormState)) => void;
   saveRule: (event: FormEvent) => void;
   openNewRule: () => void;
   closeRuleDrawer: () => void;
   editRule: (rule: MappingRule) => void;
   toggleRule: (rule: MappingRule) => void;
-  updateSplit: (index: number, patch: Partial<CreditSplit>) => void;
-  removeSplit: (index: number) => void;
+  updateSplit: (entryIndex: number, splitIndex: number, patch: Partial<CreditSplit>) => void;
+  removeSplit: (entryIndex: number, splitIndex: number) => void;
+  addEntry: () => void;
+  removeEntry: (entryIndex: number) => void;
 }) {
   const {
     accounts,
@@ -1521,7 +1646,8 @@ function MappingRulesView(props: {
     error,
     ruleForm,
     ruleDrawerOpen,
-    creditSplitTotal,
+    entryCreditTotals,
+    fieldSuggestions,
     setRuleForm,
     saveRule,
     openNewRule,
@@ -1529,7 +1655,9 @@ function MappingRulesView(props: {
     editRule,
     toggleRule,
     updateSplit,
-    removeSplit
+    removeSplit,
+    addEntry,
+    removeEntry
   } = props;
 
   return (
@@ -1566,6 +1694,7 @@ function MappingRulesView(props: {
                   <th>Biller</th>
                   <th>Category</th>
                   <th>Type Filter</th>
+                  <th>Entries</th>
                   <th>Debit Account</th>
                   <th>Credit Account(s)</th>
                   <th>Status</th>
@@ -1580,17 +1709,40 @@ function MappingRulesView(props: {
                     <td className={rule.biller ? '' : 'dim'}>{rule.biller || '-'}</td>
                     <td className={rule.billerCategory ? '' : 'dim'}>{rule.billerCategory || '-'}</td>
                     <td>{rule.transactionType ? <span className="type-tag">{rule.transactionType}</span> : <span className="dim">Catch-all</span>}</td>
-                    <td>{accountChip(rule.debitAccountCode, accounts)}</td>
+                    <td>
+                      {rule.ruleType === 'compound'
+                        ? <span className="badge badge-compound">{rule.entries.length} entries</span>
+                        : <span className="dim" style={{ fontSize: 11 }}>1</span>}
+                    </td>
+                    <td>
+                      {rule.ruleType === 'compound' ? (
+                        <div className="chip-stack">
+                          {rule.entries.map((entry, i) => (
+                            <span key={i}>
+                              {accountChip(entry.debitAccountCode, accounts)}
+                              {entry.label ? <span className="dim" style={{ fontSize: 11 }}> {entry.label}</span> : null}
+                            </span>
+                          ))}
+                        </div>
+                      ) : accountChip(rule.entries[0]?.debitAccountCode ?? '', accounts)}
+                    </td>
                     <td>
                       <div className="chip-stack">
-                        {rule.creditSplits.map((split) => (
-                          <span key={`${rule.id}-${split.accountCode}`}>
-                            {accountChip(split.accountCode, accounts)}{' '}
-                            <span className="dim" style={{ fontSize: 11 }}>
-                              {formatBps(split.percentageBps)}
-                            </span>
-                          </span>
-                        ))}
+                        {rule.ruleType === 'compound'
+                          ? rule.entries.flatMap((entry, ei) =>
+                              entry.creditSplits.map((split) => (
+                                <span key={`${ei}-${split.accountCode}`}>
+                                  {accountChip(split.accountCode, accounts)}{' '}
+                                  <span className="dim" style={{ fontSize: 11 }}>{formatBps(split.percentageBps)}</span>
+                                </span>
+                              ))
+                            )
+                          : (rule.entries[0]?.creditSplits ?? []).map((split) => (
+                              <span key={`${rule.id}-${split.accountCode}`}>
+                                {accountChip(split.accountCode, accounts)}{' '}
+                                <span className="dim" style={{ fontSize: 11 }}>{formatBps(split.percentageBps)}</span>
+                              </span>
+                            ))}
                       </div>
                     </td>
                     <td><span className={`badge ${rule.status === 'active' ? 'active-rule' : 'failed'}`}>{rule.status}</span></td>
@@ -1609,7 +1761,7 @@ function MappingRulesView(props: {
                 ))}
                 {rules.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="dim">No mapping rules yet. Create the first rule from Add Rule.</td>
+                    <td colSpan={10} className="dim">No mapping rules yet. Create the first rule from Add Rule.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1632,11 +1784,14 @@ function MappingRulesView(props: {
           accounts={accounts}
           error={error}
           ruleForm={ruleForm}
-          creditSplitTotal={creditSplitTotal}
+          entryCreditTotals={entryCreditTotals}
+          fieldSuggestions={fieldSuggestions}
           setRuleForm={setRuleForm}
           saveRule={saveRule}
           updateSplit={updateSplit}
           removeSplit={removeSplit}
+          addEntry={addEntry}
+          removeEntry={removeEntry}
           closeRuleDrawer={closeRuleDrawer}
         />
       </aside>
@@ -1757,7 +1912,10 @@ function JournalLogView(props: {
             <tbody>
               {visibleEntries.map((entry) => (
                 <tr key={entry.id} onClick={() => selectJournal(entry)}>
-                  <td className="mono">{shortId(entry.id)}</td>
+                  <td className="mono">
+                    {shortId(entry.id)}
+                    {entry.entry_label ? <div className="entry-leg-label">{entry.entry_label}</div> : null}
+                  </td>
                   <td className="mono">{entry.transaction?.source_id ?? shortId(entry.transaction_id)}</td>
                   <td>{formatDate(entry.transaction?.occurred_at ?? entry.generated_at)}</td>
                   <td className="amt">{formatMoney(entry.amount, entry.currency)}</td>
@@ -1909,15 +2067,20 @@ function RuleEditor(props: {
   accounts: ChartAccount[];
   error: string;
   ruleForm: RuleFormState;
-  creditSplitTotal: number;
+  entryCreditTotals: number[];
+  fieldSuggestions: { productLines: string[]; billers: string[]; billerCategories: string[]; transactionTypes: string[] };
   setRuleForm: (updater: RuleFormState | ((current: RuleFormState) => RuleFormState)) => void;
   saveRule: (event: FormEvent) => void;
-  updateSplit: (index: number, patch: Partial<CreditSplit>) => void;
-  removeSplit: (index: number) => void;
+  updateSplit: (entryIndex: number, splitIndex: number, patch: Partial<CreditSplit>) => void;
+  removeSplit: (entryIndex: number, splitIndex: number) => void;
+  addEntry: () => void;
+  removeEntry: (entryIndex: number) => void;
   closeRuleDrawer: () => void;
 }) {
-  const { accounts, error, ruleForm, creditSplitTotal, setRuleForm, saveRule, updateSplit, removeSplit, closeRuleDrawer } = props;
-  const canSave = creditSplitTotal === 10000 && ruleForm.productLine && ruleForm.debitAccountCode;
+  const { accounts, error, ruleForm, entryCreditTotals, fieldSuggestions, setRuleForm, saveRule, updateSplit, removeSplit, addEntry, removeEntry, closeRuleDrawer } = props;
+  const canSave = Boolean(ruleForm.productLine) &&
+    ruleForm.entries.length > 0 &&
+    ruleForm.entries.every((e, i) => e.debitAccountCode && entryCreditTotals[i] === 10000);
 
   return (
     <form className="rule-drawer-form" onSubmit={saveRule}>
@@ -1925,58 +2088,116 @@ function RuleEditor(props: {
         {error ? <div className="form-error">{error}</div> : null}
 
         <div className="drawer-section rule-match-section">
-          <TextField label="Product Line" value={ruleForm.productLine} onChange={(value) => setRuleForm({ ...ruleForm, productLine: value })} />
+          <ComboField label="Product Line" value={ruleForm.productLine} onChange={(value) => setRuleForm({ ...ruleForm, productLine: value })} suggestions={fieldSuggestions.productLines} />
           <div className="form-row">
-            <TextField label="Biller" value={ruleForm.biller} onChange={(value) => setRuleForm({ ...ruleForm, biller: value })} />
-            <TextField label="Biller Category" value={ruleForm.billerCategory} onChange={(value) => setRuleForm({ ...ruleForm, billerCategory: value })} />
+            <ComboField label="Biller" value={ruleForm.biller} onChange={(value) => setRuleForm({ ...ruleForm, biller: value })} suggestions={fieldSuggestions.billers} />
+            <ComboField label="Biller Category" value={ruleForm.billerCategory} onChange={(value) => setRuleForm({ ...ruleForm, billerCategory: value })} suggestions={fieldSuggestions.billerCategories} />
           </div>
-          <TextField label="Transaction Type Filter" value={ruleForm.transactionType} onChange={(value) => setRuleForm({ ...ruleForm, transactionType: value })} />
+          <ComboField label="Transaction Type Filter" value={ruleForm.transactionType} onChange={(value) => setRuleForm({ ...ruleForm, transactionType: value })} suggestions={fieldSuggestions.transactionTypes} />
         </div>
 
         <div className="drawer-section">
-          <div className="form-section-label rule-section-label">Account</div>
-          <div className="form-field">
-            <label>Debit Account</label>
-            <select value={ruleForm.debitAccountCode} onChange={(event) => setRuleForm({ ...ruleForm, debitAccountCode: event.target.value })}>
-              <option value="">Select account</option>
-              {accounts.map((account) => <option key={account.id} value={account.code}>{account.code} - {account.name}</option>)}
-            </select>
+          <div className="form-section-label rule-section-label">Rule Type</div>
+          <div className="rule-type-toggle">
+            <label className="rule-type-option">
+              <input type="radio" name="rule-type" value="simple" checked={ruleForm.ruleType === 'simple'}
+                onChange={() => setRuleForm({ ...ruleForm, ruleType: 'simple', entries: ruleForm.entries.slice(0, 1) })} />
+              <div className="rtype-label">Simple</div>
+              <div className="rtype-desc">One journal entry per transaction</div>
+            </label>
+            <label className="rule-type-option">
+              <input type="radio" name="rule-type" value="compound" checked={ruleForm.ruleType === 'compound'}
+                onChange={() => setRuleForm({ ...ruleForm, ruleType: 'compound' })} />
+              <div className="rtype-label">Compound</div>
+              <div className="rtype-desc">Multiple journal entries from one transaction</div>
+            </label>
+          </div>
+          {ruleForm.ruleType === 'compound' && (
+            <div style={{ marginTop: 'var(--s2)', fontSize: 11, color: 'var(--color-text-3)', lineHeight: 1.5 }}>
+              Use for multi-leg flows, e.g. wallet purchase through an aggregator generates separate debit, token, and settlement entries.
+            </div>
+          )}
+
+          <div className="form-section-label rule-section-label" style={{ marginTop: 'var(--s5)' }}>
+            {ruleForm.ruleType === 'compound' ? 'Journal Entries' : 'Account'}
           </div>
 
-          <div className="form-field">
-            <label>Credit Account(s)</label>
-            {ruleForm.creditSplits.map((split, index) => (
-              <div className="credit-row" key={index}>
-                <select value={split.accountCode} onChange={(event) => updateSplit(index, { accountCode: event.target.value })}>
-                  <option value="">Credit account</option>
-                  {accounts.map((account) => <option key={account.id} value={account.code}>{account.code} - {account.name}</option>)}
-                </select>
-                <div className="percent-input">
-                  <input
-                    type="number"
-                    min="0.01"
-                    max="100"
-                    step="0.01"
-                    value={split.percentageBps / 100}
-                    onChange={(event) => updateSplit(index, { percentageBps: Math.round(Number(event.target.value) * 100) })}
-                    aria-label="Credit split percentage"
-                  />
-                  <span>%</span>
+          <div className={ruleForm.ruleType === 'compound' ? 'compound-entries' : undefined}>
+            {ruleForm.entries.map((entry, entryIndex) => (
+              <div key={entryIndex} className={ruleForm.ruleType === 'compound' ? 'compound-entry' : undefined}>
+                {ruleForm.ruleType === 'compound' && (
+                  <div className="compound-entry-header">
+                    <span className="compound-entry-num">Entry {entryIndex + 1}</span>
+                    {ruleForm.entries.length > 1 && (
+                      <button className="btn-link danger" type="button" onClick={() => removeEntry(entryIndex)}>Remove</button>
+                    )}
+                  </div>
+                )}
+
+                {ruleForm.ruleType === 'compound' && (
+                  <div className="form-field">
+                    <label>Label (optional)</label>
+                    <input type="text" placeholder="e.g. Wallet debit" value={entry.label}
+                      onChange={(event) => setRuleForm((cur) => ({
+                        ...cur,
+                        entries: cur.entries.map((e, i) => i === entryIndex ? { ...e, label: event.target.value } : e)
+                      }))} />
+                  </div>
+                )}
+
+                <div className="form-field">
+                  <label>Debit Account</label>
+                  <select value={entry.debitAccountCode}
+                    onChange={(event) => setRuleForm((cur) => ({
+                      ...cur,
+                      entries: cur.entries.map((e, i) => i === entryIndex ? { ...e, debitAccountCode: event.target.value } : e)
+                    }))}>
+                    <option value="">Select account</option>
+                    {accounts.map((account) => <option key={account.id} value={account.code}>{account.code} - {account.name}</option>)}
+                  </select>
                 </div>
-                <button className="btn btn-ghost btn-sm" type="button" onClick={() => removeSplit(index)} disabled={ruleForm.creditSplits.length === 1}>Remove</button>
+
+                <div className="form-field">
+                  <label>Credit Account(s)</label>
+                  {entry.creditSplits.map((split, splitIndex) => (
+                    <div className="credit-row" key={splitIndex}>
+                      <select value={split.accountCode} onChange={(event) => updateSplit(entryIndex, splitIndex, { accountCode: event.target.value })}>
+                        <option value="">Credit account</option>
+                        {accounts.map((account) => <option key={account.id} value={account.code}>{account.code} - {account.name}</option>)}
+                      </select>
+                      <div className="percent-input">
+                        <input
+                          type="number" min="0.01" max="100" step="0.01"
+                          value={split.percentageBps / 100}
+                          onChange={(event) => updateSplit(entryIndex, splitIndex, { percentageBps: Math.round(Number(event.target.value) * 100) })}
+                          aria-label="Credit split percentage"
+                        />
+                        <span>%</span>
+                      </div>
+                      <button className="btn btn-ghost btn-sm" type="button" onClick={() => removeSplit(entryIndex, splitIndex)} disabled={entry.creditSplits.length === 1}>Remove</button>
+                    </div>
+                  ))}
+                  <button
+                    className="btn btn-secondary btn-sm split-add-button"
+                    type="button"
+                    onClick={() => setRuleForm((cur) => ({
+                      ...cur,
+                      entries: cur.entries.map((e, i) => i === entryIndex ? { ...e, creditSplits: [...e.creditSplits, { accountCode: '', percentageBps: 0 }] } : e)
+                    }))}
+                  >Add split</button>
+                  <div className={`split-total ${entryCreditTotals[entryIndex] === 10000 ? 'ok' : 'bad'}`}>
+                    Total: {formatBps(entryCreditTotals[entryIndex] ?? 0)}
+                  </div>
+                </div>
               </div>
             ))}
-            <button
-              className="btn btn-secondary btn-sm split-add-button"
-              type="button"
-              onClick={() => setRuleForm((current) => ({ ...current, creditSplits: [...current.creditSplits, { accountCode: '', percentageBps: 0 }] }))}
-            >
-              Add split
-            </button>
-            <div className={`split-total ${creditSplitTotal === 10000 ? 'ok' : 'bad'}`}>
-              Total: {formatBps(creditSplitTotal)}
-            </div>
           </div>
+
+          {ruleForm.ruleType === 'compound' && (
+            <button className="btn btn-ghost btn-sm" type="button" style={{ marginTop: 'var(--s3)' }} onClick={addEntry}>
+              + Add journal entry
+            </button>
+          )}
         </div>
       </div>
 
@@ -2148,6 +2369,8 @@ function SettingsView(props: {
   adapters: AdapterRecord[];
   pollStatuses: Record<string, PollStatusRecord>;
   importCoaFromCsv: (rows: CoaRow[]) => Promise<void>;
+  toggleCoaAccount: (code: string, active: boolean) => Promise<void>;
+  deleteCoaAccount: (code: string) => Promise<void>;
   createApiKey: (input: { name: string; scopes: ApiScope[] }) => Promise<void>;
   currentUserRole: UserRole;
   inviteUser: (input: { email: string; displayName?: string; role: UserRole; password?: string }) => Promise<void>;
@@ -2173,6 +2396,8 @@ function SettingsView(props: {
     adapters,
     pollStatuses,
     importCoaFromCsv,
+    toggleCoaAccount,
+    deleteCoaAccount,
     createApiKey,
     currentUserRole,
     inviteUser,
@@ -2216,7 +2441,7 @@ function SettingsView(props: {
           {settingsTab === 'schema' ? (
             <SchemaSettingsPanel />
           ) : settingsTab === 'coa' ? (
-            <CsvCoaImportPanel accounts={accounts} onImport={importCoaFromCsv} />
+            <CsvCoaImportPanel accounts={accounts} onImport={importCoaFromCsv} onDeactivate={toggleCoaAccount} onDelete={deleteCoaAccount} />
           ) : settingsTab === 'adapters' ? (
             <AdapterSettingsPanel
               adapters={adapters}
@@ -2697,8 +2922,10 @@ function downloadTemplate() {
 function CsvCoaImportPanel(props: {
   accounts: ChartAccount[];
   onImport: (rows: CoaRow[]) => Promise<void>;
+  onDeactivate: (code: string, active: boolean) => Promise<void>;
+  onDelete: (code: string) => Promise<void>;
 }) {
-  const { accounts, onImport } = props;
+  const { accounts, onImport, onDeactivate, onDelete } = props;
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<{ ok: true; count: number } | { ok: false; message: string } | null>(null);
@@ -2770,18 +2997,18 @@ function CsvCoaImportPanel(props: {
       <div className="table-card">
         <table className="tbl">
           <thead>
-            <tr><th>Code</th><th>Account Name</th><th>Sub-category</th><th>Type</th><th>CCY</th><th>Status</th></tr>
+            <tr><th>Code</th><th>Account Name</th><th>Sub-category</th><th>Type</th><th>CCY</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {accounts.length === 0 && (
-              <tr><td colSpan={6} className="dim">No accounts imported yet. Use Import CSV above to get started.</td></tr>
+              <tr><td colSpan={7} className="dim">No accounts imported yet. Use Import CSV above to get started.</td></tr>
             )}
             {COA_SECTION_ORDER.flatMap((type) => {
               const rows = grouped[type];
               if (!rows.length) return [];
               return [
                 <tr key={`hdr-${type}`}>
-                  <td colSpan={6} style={{ background: 'var(--color-muted-bg)', fontWeight: 600, fontSize: 11, color: 'var(--color-text-2)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                  <td colSpan={7} style={{ background: 'var(--color-muted-bg)', fontWeight: 600, fontSize: 11, color: 'var(--color-text-2)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
                     {COA_SECTION_LABELS[type]}
                   </td>
                 </tr>,
@@ -2793,6 +3020,14 @@ function CsvCoaImportPanel(props: {
                     <td>{accountTypeChip(account.type)}</td>
                     <td className="mono dim" style={{ fontSize: 'var(--text-xs)' }}>{account.currency}</td>
                     <td><span className={`badge ${account.active ? 'active-rule' : 'failed'}`}>{account.active ? 'Active' : 'Inactive'}</span></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="btn-link primary" onClick={() => void onDeactivate(account.code, !account.active)}>
+                          {account.active ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button className="btn-link danger" onClick={() => void onDelete(account.code)}>Delete</button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               ];
@@ -3904,11 +4139,36 @@ function labelizeText(value: string) {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
-function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ComboField({ label, value, onChange, suggestions }: { label: string; value: string; onChange: (value: string) => void; suggestions: string[] }) {
+  const [open, setOpen] = useState(false);
+  const filtered = suggestions.filter((s) => !value || s.toLowerCase().includes(value.toLowerCase()));
+
+  function handleSelect(s: string) {
+    onChange(s);
+    setOpen(false);
+  }
+
   return (
-    <div className="form-field">
+    <div className="form-field combo-field">
       <label>{label}</label>
-      <input value={value} onChange={(event) => onChange(event.target.value)} />
+      <div className="combo-wrap">
+        <input
+          value={value}
+          autoComplete="off"
+          onChange={(event) => { onChange(event.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+        />
+        {open && filtered.length > 0 && (
+          <ul className="combo-list">
+            {filtered.map((s) => (
+              <li key={s} className="combo-item" onMouseDown={(event) => { event.preventDefault(); handleSelect(s); }}>
+                {s}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

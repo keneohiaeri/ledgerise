@@ -43,6 +43,8 @@ interface JournalLogRow {
   mapping_rule_id: string | null;
   mapping_rule_version: number | null;
   reversal_of_journal_entry_id: string | null;
+  entry_order: number;
+  entry_label: string | null;
   generated_at: Date | string;
   posted_at: Date | string | null;
   last_posting_attempt_at: Date | string | null;
@@ -730,6 +732,8 @@ const journalLogSelectColumns = `
   journal_entries.mapping_rule_id,
   journal_entries.mapping_rule_version,
   journal_entries.reversal_of_journal_entry_id,
+  journal_entries.entry_order,
+  journal_entries.entry_label,
   journal_entries.generated_at,
   journal_entries.posted_at,
   journal_entries.last_posting_attempt_at,
@@ -934,6 +938,8 @@ function toJournalLogEntry(row: JournalLogRow): JournalLogEntry {
     mappingRuleId: row.mapping_rule_id ?? undefined,
     mappingRuleVersion: row.mapping_rule_version ?? undefined,
     reversalOfJournalEntryId: row.reversal_of_journal_entry_id ?? undefined,
+    entryOrder: row.entry_order,
+    entryLabel: row.entry_label ?? undefined,
     generatedAt: toIsoString(row.generated_at),
     postedAt: row.posted_at ? toIsoString(row.posted_at) : undefined,
     lastPostingAttemptAt: row.last_posting_attempt_at

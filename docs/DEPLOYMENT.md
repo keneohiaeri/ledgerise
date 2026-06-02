@@ -7,8 +7,10 @@ Ledgerise is a monorepo with three deployable pieces:
 | Service | Description | Default port |
 |---|---|---|
 | `apps/api` | Node.js HTTP API (TypeScript, compiled to `dist/`) | 3000 |
-| `apps/web` | React dashboard (Vite, compiled to `dist/` static files) | 5173 (dev) |
+| `apps/web` | React dashboard (Vite SPA, compiled to static files) | 3001 (dev/staging) |
 | `apps/worker` | Background job runner (optional, for scheduled posting) | — |
+
+In production the frontend static files are served by nginx (VPS) or a static site hosting service (Render/Railway) — not directly by Node.js. The API and frontend communicate over HTTP; the frontend only needs to know the API's public URL at build time via `VITE_API_BASE_URL`.
 
 The API and web frontend are independent — the frontend only needs a URL to reach the API.
 
@@ -144,8 +146,8 @@ After=network.target postgresql.service
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/ledgerise/apps/api
-ExecStart=/usr/bin/node dist/index.js
+WorkingDirectory=/opt/ledgerise
+ExecStart=/usr/bin/node apps/api/dist/index.js
 Restart=on-failure
 RestartSec=5
 
@@ -252,7 +254,7 @@ Render dashboard → **New → Web Service** → connect your GitHub repo.
 | Root directory | *(leave blank — monorepo build runs from root)* |
 | Runtime | Node |
 | Build command | `npm install && npm run build` |
-| Start command | `node apps/api/dist/index.js` |
+| Start command | `npm start` |
 
 Add environment variables in the Render dashboard:
 
@@ -308,7 +310,7 @@ Similar to Render but with a project-based UI that groups services together.
 1. Create a new Railway project and add a **PostgreSQL** plugin.
 2. Add a service from GitHub, set **Root Directory** to leave blank, set:
    - **Build command**: `npm install && npm run build`
-   - **Start command**: `node apps/api/dist/index.js`
+   - **Start command**: `npm start`
 3. Add the same environment variables as in the Render section. Railway injects `DATABASE_URL` automatically from the Postgres plugin.
 4. For the frontend, add a second service or use Railway's static hosting. Set `VITE_API_BASE_URL` to the API service's Railway domain before the build runs.
 5. Run migrations from your local machine the same way as in the Render section.

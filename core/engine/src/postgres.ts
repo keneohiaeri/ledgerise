@@ -1,7 +1,7 @@
 import pg from 'pg';
 
 import type { CanonicalTransaction } from '@ledgerise/canonical-types';
-import type { MappingRule, MappingRuleStatus } from '@ledgerise/core-mapping';
+import type { JournalEntryTemplate, MappingRule, MappingRuleStatus } from '@ledgerise/core-mapping';
 
 import type {
   EngineTransaction,
@@ -34,12 +34,12 @@ interface MappingRuleRow {
   biller: string | null;
   biller_category: string | null;
   transaction_type: string | null;
-  debit_account_code: string;
+  rule_type: 'simple' | 'compound';
+  entries: unknown;
   status: MappingRuleStatus;
   version: number;
   created_at: Date | string;
   updated_at: Date | string;
-  credit_splits: unknown;
 }
 
 interface JournalEntryRow {
@@ -53,6 +53,8 @@ interface JournalEntryRow {
   mapping_rule_id: string | null;
   mapping_rule_version: number | null;
   reversal_of_journal_entry_id: string | null;
+  entry_order: number;
+  entry_label: string | null;
   generated_at: Date | string;
   lines: unknown;
 }
@@ -127,6 +129,7 @@ export class PostgresJournalEngineRepository implements JournalEngineRepository 
         SELECT ${journalEntrySelectColumns}
         FROM journal_entries
         WHERE operator_id = $1 AND transaction_id = $2
+        ORDER BY entry_order ASC
         LIMIT 1
       `,
       [input.operatorId, input.transactionId]
@@ -135,87 +138,90 @@ export class PostgresJournalEngineRepository implements JournalEngineRepository 
     return result.rows[0] ? toJournalEntry(result.rows[0]) : null;
   }
 
-  async saveJournalEntry(input: NewJournalEntry): Promise<JournalEntry> {
+  async findJournalEntriesForTransaction(input: {
+    operatorId: string;
+    transactionId: string;
+  }): Promise<JournalEntry[]> {
+    const result = await this.pool.query<JournalEntryRow>(
+      `
+        SELECT ${journalEntrySelectColumns}
+        FROM journal_entries
+        WHERE operator_id = $1 AND transaction_id = $2
+        ORDER BY entry_order ASC
+      `,
+      [input.operatorId, input.transactionId]
+    );
+
+    return result.rows.map(toJournalEntry);
+  }
+
+  async saveJournalEntries(inputs: NewJournalEntry[]): Promise<JournalEntry[]> {
     const client = await this.pool.connect();
 
     try {
       await client.query('BEGIN');
-      const entryResult = await client.query<JournalEntryRow>(
-        `
-          INSERT INTO journal_entries (
-            operator_id,
-            transaction_id,
-            entry_type,
-            status,
-            currency,
-            amount,
-            mapping_rule_id,
-            mapping_rule_version,
-            reversal_of_journal_entry_id,
-            posting_status,
-            generated_at
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-          ON CONFLICT (operator_id, transaction_id) DO NOTHING
-          RETURNING ${journalEntrySelectColumns}
-        `,
-        [
-          input.operatorId,
-          input.transactionId,
-          input.entryType,
-          input.status,
-          input.currency,
-          input.amount,
-          input.mappingRuleId ?? null,
-          input.mappingRuleVersion ?? null,
-          input.reversalOfJournalEntryId ?? null,
-          input.status === 'unmapped' ? 'unmapped' : 'generated',
-          input.generatedAt
-        ]
-      );
+      const saved: JournalEntry[] = [];
 
-      const insertedEntry = entryResult.rows[0];
-      if (!insertedEntry) {
-        await client.query('COMMIT');
-        const existing = await this.findJournalEntryByTransactionId({
-          operatorId: input.operatorId,
-          transactionId: input.transactionId
-        });
-        if (!existing) throw new Error('Journal entry insert skipped but no existing entry was found');
-        return existing;
-      }
-
-      for (const line of input.lines) {
-        await client.query(
+      for (const input of inputs) {
+        const entryResult = await client.query<JournalEntryRow>(
           `
-            INSERT INTO journal_entry_lines (
-              journal_entry_id,
+            INSERT INTO journal_entries (
               operator_id,
-              account_code,
-              side,
-              amount,
+              transaction_id,
+              entry_type,
+              status,
               currency,
-              line_order
+              amount,
+              mapping_rule_id,
+              mapping_rule_version,
+              reversal_of_journal_entry_id,
+              posting_status,
+              entry_order,
+              entry_label,
+              generated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (operator_id, transaction_id, entry_order) DO NOTHING
+            RETURNING ${journalEntrySelectColumns}
           `,
           [
-            insertedEntry.id,
             input.operatorId,
-            line.accountCode,
-            line.side,
-            line.amount,
-            line.currency,
-            line.lineOrder
+            input.transactionId,
+            input.entryType,
+            input.status,
+            input.currency,
+            input.amount,
+            input.mappingRuleId ?? null,
+            input.mappingRuleVersion ?? null,
+            input.reversalOfJournalEntryId ?? null,
+            input.status === 'unmapped' ? 'unmapped' : 'generated',
+            input.entryOrder,
+            input.entryLabel ?? null,
+            input.generatedAt
           ]
         );
+
+        const insertedEntry = entryResult.rows[0];
+        if (!insertedEntry) continue;
+
+        for (const line of input.lines) {
+          await client.query(
+            `
+              INSERT INTO journal_entry_lines (
+                journal_entry_id, operator_id, account_code, side, amount, currency, line_order
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `,
+            [insertedEntry.id, input.operatorId, line.accountCode, line.side, line.amount, line.currency, line.lineOrder]
+          );
+        }
+
+        const reloaded = await findJournalEntryById(client, input.operatorId, insertedEntry.id);
+        if (reloaded) saved.push(reloaded);
       }
 
-      const reloaded = await findJournalEntryById(client, input.operatorId, insertedEntry.id);
-      if (!reloaded) throw new Error('Failed to reload journal entry');
-
       await client.query('COMMIT');
-      return reloaded;
+      return saved;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
@@ -232,25 +238,12 @@ const mappingRuleSelectColumns = `
   biller,
   biller_category,
   transaction_type,
-  debit_account_code,
+  rule_type,
+  entries,
   status,
   version,
   created_at,
-  updated_at,
-  (
-    SELECT COALESCE(
-      jsonb_agg(
-        jsonb_build_object(
-          'accountCode', account_code,
-          'percentageBps', percentage_bps
-        )
-        ORDER BY account_code
-      ),
-      '[]'::jsonb
-    )
-    FROM mapping_rule_credit_splits
-    WHERE mapping_rule_credit_splits.mapping_rule_id = mapping_rules.id
-  ) AS credit_splits
+  updated_at
 `;
 
 const journalEntrySelectColumns = `
@@ -264,6 +257,8 @@ const journalEntrySelectColumns = `
   journal_entries.mapping_rule_id,
   journal_entries.mapping_rule_version,
   journal_entries.reversal_of_journal_entry_id,
+  journal_entries.entry_order,
+  journal_entries.entry_label,
   journal_entries.generated_at,
   (
     SELECT COALESCE(
@@ -318,18 +313,28 @@ function toMappingRule(row: MappingRuleRow): MappingRule {
     biller: row.biller ?? undefined,
     billerCategory: row.biller_category ?? undefined,
     transactionType: row.transaction_type ?? undefined,
-    debitAccountCode: row.debit_account_code,
+    ruleType: row.rule_type,
+    entries: parseEntries(row.entries),
     status: row.status,
     version: row.version,
-    creditSplits: Array.isArray(row.credit_splits)
-      ? row.credit_splits.map((split) => {
-          const item = split as { accountCode: string; percentageBps: number };
-          return { accountCode: item.accountCode, percentageBps: item.percentageBps };
-        })
-      : [],
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at)
   };
+}
+
+function parseEntries(value: unknown): JournalEntryTemplate[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const e = item as { label?: string; debitAccountCode: string; creditSplits: Array<{ accountCode: string; percentageBps: number }> };
+    return {
+      label: e.label,
+      debitAccountCode: e.debitAccountCode,
+      creditSplits: (e.creditSplits ?? []).map((s) => ({
+        accountCode: s.accountCode,
+        percentageBps: s.percentageBps
+      }))
+    };
+  });
 }
 
 function toJournalEntry(row: JournalEntryRow): JournalEntry {
@@ -344,6 +349,8 @@ function toJournalEntry(row: JournalEntryRow): JournalEntry {
     mappingRuleId: row.mapping_rule_id ?? undefined,
     mappingRuleVersion: row.mapping_rule_version ?? undefined,
     reversalOfJournalEntryId: row.reversal_of_journal_entry_id ?? undefined,
+    entryOrder: row.entry_order,
+    entryLabel: row.entry_label ?? undefined,
     generatedAt: toIsoString(row.generated_at),
     lines: parseJournalLines(row.lines)
   };

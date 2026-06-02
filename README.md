@@ -107,14 +107,21 @@ done
 psql "$DATABASE_URL" -f infra/seed/0001_local_operator_and_adapters.sql
 psql "$DATABASE_URL" -f infra/seed/0002_default_coa.sql
 
-# Build and start
+# Build
 npm run build
-node apps/api/dist/index.js
+
+# Start the API
+npm start
+
+# Serve the frontend (separate terminal)
+npm run start:web
 ```
 
-On first start, Ledgerise creates a bootstrap admin account using the credentials in your `.env`. Change the password on first login.
+On first start, Ledgerise creates a bootstrap admin account using the credentials in your `.env`. Log in and change the password before doing anything else.
 
-For full deployment instructions including VPS, Render, Railway, nginx reverse proxy, and systemd service setup, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+The API runs on port 3000. The frontend runs on port 3001 by default. In production, both should sit behind a reverse proxy (nginx handles this — see deployment docs). For managed platforms like Render and Railway, the frontend is deployed as a static site and the API as a web service — each gets its own URL.
+
+For full instructions including VPS setup, nginx config, TLS, systemd, Render, and Railway, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Cloud-Hosted
 
