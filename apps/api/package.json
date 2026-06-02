@@ -10,7 +10,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ledgerise/adapter-inbound-generic-csv": "0.1.0",
+    "@ledgerise/adapter-inbound-generic-webhook": "0.1.0",
     "@ledgerise/adapter-outbound-generic-journal-csv": "0.1.0",
+    "@ledgerise/adapter-outbound-zoho-books": "0.1.0",
     "@ledgerise/core-ingestion": "0.1.0",
     "@ledgerise/core-mapping": "0.1.0",
     "@ledgerise/core-posting": "0.1.0"

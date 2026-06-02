@@ -65,11 +65,23 @@ export interface StoredIngestionError {
   occurredAt: string;
 }
 
+export interface StoredAdapterConfiguration {
+  operatorId: string;
+  name: string;
+  enabled: boolean;
+  config: unknown;
+  metadata: Record<string, unknown>;
+  updatedAt: string;
+}
+
 export interface IngestionRepository {
   findBySourceIdentity(input: SourceIdentityLookup): Promise<StoredCanonicalTransaction | null>;
   findTransactionById(input: TransactionIdentityLookup): Promise<StoredCanonicalTransaction | null>;
   listTransactions(input: TransactionListInput): Promise<ListPage<StoredCanonicalTransaction>>;
   listIngestionErrors(input: IngestionErrorListInput): Promise<ListPage<StoredIngestionError>>;
+  listAdapterConfigurations(operatorId: string): Promise<StoredAdapterConfiguration[]>;
+  findAdapterConfiguration(input: AdapterConfigurationLookup): Promise<StoredAdapterConfiguration | null>;
+  saveAdapterConfiguration(input: SaveAdapterConfigurationInput): Promise<StoredAdapterConfiguration | null>;
   saveTransaction(input: NewStoredCanonicalTransaction): Promise<StoredCanonicalTransaction>;
   saveIngestionError(input: NewStoredIngestionError): Promise<StoredIngestionError>;
 }
@@ -98,6 +110,15 @@ export interface TransactionIdentityLookup {
 
 export interface OperatorScopedLookup {
   operatorId: string;
+}
+
+export interface AdapterConfigurationLookup extends OperatorScopedLookup {
+  adapterName: string;
+}
+
+export interface SaveAdapterConfigurationInput extends AdapterConfigurationLookup {
+  enabled?: boolean;
+  config: unknown;
 }
 
 export interface NewStoredCanonicalTransaction {
@@ -260,6 +281,7 @@ export class IngestionService {
 export class InMemoryIngestionRepository implements IngestionRepository {
   readonly transactions: StoredCanonicalTransaction[] = [];
   readonly ingestionErrors: StoredIngestionError[] = [];
+  readonly adapterConfigurations = new Map<string, StoredAdapterConfiguration>();
 
   async findBySourceIdentity(
     input: SourceIdentityLookup
@@ -370,6 +392,43 @@ export class InMemoryIngestionRepository implements IngestionRepository {
     this.ingestionErrors.push(error);
     return error;
   }
+
+  async listAdapterConfigurations(operatorId: string): Promise<StoredAdapterConfiguration[]> {
+    return [...this.adapterConfigurations.values()]
+      .filter((configuration) => configuration.operatorId === operatorId)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async findAdapterConfiguration(
+    input: AdapterConfigurationLookup
+  ): Promise<StoredAdapterConfiguration | null> {
+    return this.adapterConfigurations.get(adapterConfigurationKey(input.operatorId, input.adapterName)) ?? null;
+  }
+
+  async saveAdapterConfiguration(
+    input: SaveAdapterConfigurationInput
+  ): Promise<StoredAdapterConfiguration> {
+    const key = adapterConfigurationKey(input.operatorId, input.adapterName);
+    const current = this.adapterConfigurations.get(key);
+    const configuration: StoredAdapterConfiguration = {
+      operatorId: input.operatorId,
+      name: input.adapterName,
+      enabled: input.enabled ?? current?.enabled ?? true,
+      config: input.config,
+      metadata: {
+        ...(current?.metadata ?? {}),
+        config: input.config
+      },
+      updatedAt: new Date().toISOString()
+    };
+
+    this.adapterConfigurations.set(key, configuration);
+    return configuration;
+  }
+}
+
+function adapterConfigurationKey(operatorId: string, adapterName: string) {
+  return `${operatorId}:${adapterName}`;
 }
 
 function getNestedString(input: unknown, path: string[]): string | undefined {

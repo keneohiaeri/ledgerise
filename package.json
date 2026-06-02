@@ -26,7 +26,9 @@
     "verify:mapping": "node scripts/verify-mapping.mjs",
     "verify:engine": "node scripts/verify-engine.mjs",
     "verify:posting": "node scripts/verify-posting.mjs",
-    "verify:outbound-csv": "node scripts/verify-outbound-csv.mjs"
+    "verify:outbound-csv": "node scripts/verify-outbound-csv.mjs",
+    "verify:posting-file-exchange": "node scripts/verify-posting-file-exchange.mjs",
+    "verify:zoho-books": "node scripts/verify-zoho-books.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -74,7 +74,7 @@ try {
   });
   assertEqual(ingestResult.status, 'accepted', 'transaction accepted');
 
-  const engineResult = await engine.runOnce({ operatorId, limit: 50 });
+  const engineResult = await engine.runOnce({ operatorId, limit: 5000 });
   const entry = engineResult.entries.find((item) => item.transactionId === transaction.id);
   assert(entry, 'engine generated outbound CSV verification entry');
 

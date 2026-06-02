@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 
 type Screen = 'transactions' | 'mapping-rules' | 'journal-log' | 'settings';
 type SettingsTab = 'coa' | 'schema' | 'adapters' | 'users' | 'system';
@@ -113,6 +113,63 @@ interface JournalEntry {
   };
 }
 
+interface AdapterRecord {
+  name: string;
+  version: string;
+  direction: 'inbound' | 'outbound';
+  source_system?: string;
+  target_system?: string;
+  modes: string[];
+  currency_codes: string[];
+  runtime: {
+    type: 'internal' | 'http';
+  };
+  enabled?: boolean;
+  config?: unknown;
+}
+
+interface AdapterMappingRow {
+  sourcePath: string;
+  canonicalField: string;
+  transform: string;
+  defaultValue: string;
+  required: boolean;
+}
+
+type AdapterConfigField =
+  | { type: 'display'; label: string; value: string; hint: string }
+  | { type: 'text' | 'password' | 'number'; label: string; value?: string; hint: string; key?: string }
+  | { type: 'select'; label: string; value: string; options: string[]; hint: string; key?: string }
+  | { type: 'action'; label?: string; text: string; status: string; statusClass: 'ok' | 'err' }
+  | {
+      type: 'mapping';
+      id: string;
+      sourceLabel?: string;
+      rows: AdapterMappingRow[];
+      preview: {
+        source: string;
+        output: string;
+      };
+    };
+
+interface AdapterConfigSection {
+  title: string;
+  desc?: string;
+  fields: AdapterConfigField[];
+}
+
+interface AdapterConfigTemplate {
+  subtitle: string;
+  summary: string;
+  sections: AdapterConfigSection[];
+}
+
+interface PageInfo {
+  limit: number;
+  offset: number;
+  total: number;
+}
+
 interface RuleFormState {
   id?: string;
   productLine: string;
@@ -124,6 +181,245 @@ interface RuleFormState {
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
+const transactionPageSize = 100;
+const canonicalFieldOptions = [
+  'source_id',
+  'occurred_at',
+  'settled_at',
+  'status',
+  'amount',
+  'currency',
+  'type',
+  'direction',
+  'product.line',
+  'product.biller',
+  'product.biller_category',
+  'principal.id',
+  'principal.reference',
+  'principal.type',
+  'channel',
+  'metadata'
+];
+const transformOptions = ['copy', 'parse_datetime', 'amount_to_minor', 'enum_map', 'lowercase', 'uppercase', 'mask_phone'];
+
+const adapterConfigTemplates: Record<string, AdapterConfigTemplate> = {
+  'generic-webhook': {
+    subtitle: 'Inbound · Webhook',
+    summary: 'Receives mapped JSON payloads from any source system.',
+    sections: [
+      {
+        title: 'Webhook Endpoint',
+        fields: [
+          {
+            label: 'Inbound URL',
+            type: 'display',
+            value: `${apiBaseUrl}/api/ingest/generic-webhook`,
+            hint: 'Send canonical JSON transaction payloads from source systems to this endpoint.'
+          },
+          {
+            label: 'Signing Secret',
+            type: 'password',
+            hint: 'Optional shared secret for verifying inbound requests before normalization.'
+          }
+        ]
+      },
+      {
+        title: 'Payload Contract',
+        fields: [
+          { label: 'Records Path', type: 'text', value: 'records', hint: 'JSON path containing one or more canonical transaction records.' },
+          {
+            label: 'Accept Partial Batches',
+            type: 'select',
+            options: ['Yes, store valid records', 'No, reject entire batch'],
+            value: 'Yes, store valid records',
+            hint: 'Controls how the adapter handles mixed valid and invalid payloads.'
+          }
+        ]
+      },
+      {
+        title: 'Field Mapping',
+        desc: 'Map source JSON paths to Ledgerise canonical fields before records reach the journal engine.',
+        fields: [
+          {
+            type: 'mapping',
+            id: 'generic-webhook-map',
+            rows: [
+              { sourcePath: 'txn_ref', canonicalField: 'source_id', transform: 'copy', defaultValue: '', required: true },
+              { sourcePath: 'paid_at', canonicalField: 'occurred_at', transform: 'parse_datetime', defaultValue: '', required: true },
+              { sourcePath: 'state', canonicalField: 'status', transform: 'enum_map', defaultValue: 'SUCCESS=settled, FAILED=failed', required: true },
+              { sourcePath: 'value', canonicalField: 'amount', transform: 'amount_to_minor', defaultValue: '', required: true },
+              { sourcePath: 'service', canonicalField: 'type', transform: 'enum_map', defaultValue: 'electricity=payment.electricity', required: true },
+              { sourcePath: 'customer_id', canonicalField: 'principal.id', transform: 'copy', defaultValue: '', required: true },
+              { sourcePath: 'customer_phone', canonicalField: 'principal.reference', transform: 'mask_phone', defaultValue: '', required: false }
+            ],
+            preview: {
+              source: '{\n  "txn_ref": "ABC123",\n  "paid_at": "2026-05-31T14:01:54Z",\n  "state": "SUCCESS",\n  "value": 5000,\n  "service": "electricity"\n}',
+              output: '{\n  "source_id": "ABC123",\n  "status": "settled",\n  "amount": 500000,\n  "currency": "NGN"\n}'
+            }
+          }
+        ]
+      }
+    ]
+  },
+  'generic-poll': {
+    subtitle: 'Inbound · Poll',
+    summary: 'Fetches transactions from simple JSON APIs on a schedule.',
+    sections: [
+      {
+        title: 'Source API',
+        fields: [
+          { label: 'Endpoint URL', type: 'text', value: 'https://api.example.com/transactions', hint: 'Ledgerise fetches this URL on the configured schedule.' },
+          { label: 'Auth Header', type: 'text', value: 'Authorization', hint: 'Header used for API authentication.' },
+          { label: 'API Token', type: 'password', hint: 'Stored securely and redacted from logs.' },
+          { label: 'Records Path', type: 'text', value: 'data.transactions', hint: 'JSON path containing source records.' }
+        ]
+      },
+      {
+        title: 'Poll Schedule',
+        fields: [
+          {
+            label: 'Poll Interval',
+            type: 'select',
+            options: ['Every 5 minutes', 'Every 15 minutes', 'Every 30 minutes', 'Every hour'],
+            value: 'Every 15 minutes',
+            hint: 'How often Ledgerise fetches new records.'
+          },
+          { label: 'Cursor Field', type: 'text', value: 'updated_at', hint: 'Field used to advance the next poll cursor after successful ingestion.' }
+        ]
+      },
+      {
+        title: 'Field Mapping',
+        desc: 'Map each API result object to canonical fields. The cursor only advances after these records validate.',
+        fields: [
+          {
+            type: 'mapping',
+            id: 'generic-poll-map',
+            rows: [
+              { sourcePath: 'id', canonicalField: 'source_id', transform: 'copy', defaultValue: '', required: true },
+              { sourcePath: 'created_at', canonicalField: 'occurred_at', transform: 'parse_datetime', defaultValue: '', required: true },
+              { sourcePath: 'settled_at', canonicalField: 'settled_at', transform: 'parse_datetime', defaultValue: '', required: false },
+              { sourcePath: 'amount', canonicalField: 'amount', transform: 'amount_to_minor', defaultValue: '', required: true },
+              { sourcePath: 'status', canonicalField: 'status', transform: 'enum_map', defaultValue: 'completed=settled, failed=failed', required: true },
+              { sourcePath: 'product', canonicalField: 'product.line', transform: 'copy', defaultValue: 'consumer-app', required: true }
+            ],
+            preview: {
+              source: '{\n  "id": "api_8841",\n  "created_at": "2026-05-31T11:02:44Z",\n  "status": "completed",\n  "amount": 1200,\n  "product": "consumer-app"\n}',
+              output: '{\n  "source_id": "api_8841",\n  "status": "settled",\n  "amount": 120000,\n  "product": { "line": "consumer-app" }\n}'
+            }
+          }
+        ]
+      }
+    ]
+  },
+  'generic-csv': {
+    subtitle: 'Inbound · File import',
+    summary: 'Imports CSV transaction exports with configurable column mapping.',
+    sections: [
+      {
+        title: 'Column Mapping',
+        desc: 'Map CSV headers to canonical fields. These mappings are configuration, not adapter code.',
+        fields: [
+          {
+            type: 'mapping',
+            id: 'generic-csv-map',
+            sourceLabel: 'CSV column',
+            rows: [
+              { sourcePath: 'reference', canonicalField: 'source_id', transform: 'copy', defaultValue: '', required: true },
+              { sourcePath: 'transaction_date', canonicalField: 'occurred_at', transform: 'parse_datetime', defaultValue: '', required: true },
+              { sourcePath: 'amount', canonicalField: 'amount', transform: 'amount_to_minor', defaultValue: '', required: true },
+              { sourcePath: 'status', canonicalField: 'status', transform: 'enum_map', defaultValue: 'success=settled, failed=failed', required: true },
+              { sourcePath: 'transaction_type', canonicalField: 'type', transform: 'copy', defaultValue: '', required: true },
+              { sourcePath: 'product_line', canonicalField: 'product.line', transform: 'copy', defaultValue: '', required: true },
+              { sourcePath: 'biller', canonicalField: 'product.biller', transform: 'copy', defaultValue: '', required: false }
+            ],
+            preview: {
+              source: 'reference,transaction_date,amount,status,transaction_type,product_line,biller\nCSV-4482,2026-05-31,5000,success,payment.electricity,consumer-app,ikeja-electric',
+              output: '{\n  "source_id": "CSV-4482",\n  "occurred_at": "2026-05-31T00:00:00Z",\n  "amount": 500000,\n  "status": "settled"\n}'
+            }
+          }
+        ]
+      },
+      {
+        title: 'Format',
+        fields: [
+          { label: 'Delimiter', type: 'select', options: ['Comma (,)', 'Semicolon (;)', 'Tab', 'Pipe (|)'], value: 'Comma (,)', hint: 'The manual import button currently expects comma-separated files.' },
+          { label: 'Date Format', type: 'select', options: ['YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY', 'ISO 8601'], value: 'YYYY-MM-DD', hint: 'Used by the CSV normalizer when parsing transaction dates.' },
+          { label: 'Amount Unit', type: 'select', options: ['Smallest unit (kobo, cents)', 'Major unit (naira, dollars)'], value: 'Smallest unit (kobo, cents)', hint: 'Ledgerise stores amounts in the smallest currency unit internally.' }
+        ]
+      }
+    ]
+  },
+  'zoho-books': {
+    subtitle: 'Outbound · Journal posting',
+    summary: 'Posts journal entries to Zoho Books via the Manual Journals API.',
+    sections: [
+      {
+        title: 'OAuth 2.0 Authentication',
+        fields: [
+          { label: 'Client ID', type: 'text', value: 'ZOHO_CLIENT_ID', hint: 'Configured from environment until secret storage is added.' },
+          { label: 'Client Secret', type: 'password', hint: 'Keep this secret out of logs and browser storage.' },
+          { label: 'Organization ID', type: 'text', value: 'ZOHO_ORGANIZATION_ID', hint: 'Zoho Books organization identifier.' },
+          { type: 'action', text: 'Test connection', status: 'Configured from server environment', statusClass: 'ok' }
+        ]
+      },
+      {
+        title: 'Posting Behaviour',
+        fields: [
+          { label: 'Batch Size', type: 'number', value: '100', hint: 'Maximum number of journal entries sent per posting batch.' },
+          {
+            label: 'On Rate Limit',
+            type: 'select',
+            options: ['Retry with exponential backoff', 'Pause batch and alert'],
+            value: 'Retry with exponential backoff',
+            hint: 'Controls retry behavior when Zoho returns a rate-limit response.'
+          },
+          {
+            label: 'Journal Status',
+            type: 'select',
+            options: ['draft', 'published'],
+            value: 'draft',
+            hint: 'Draft is safest for sandbox and first production rollout.'
+          }
+        ]
+      },
+      {
+        title: 'Account Mapping',
+        fields: [
+          { label: 'Account Map Source', type: 'display', value: 'ZOHO_ACCOUNT_MAP_JSON', hint: 'Maps Ledgerise account codes to Zoho account IDs before posting.' }
+        ]
+      }
+    ]
+  },
+  'generic-journal-csv': {
+    subtitle: 'Outbound · File exchange',
+    summary: 'Creates durable journal CSV artifacts for external accounting systems.',
+    sections: [
+      {
+        title: 'Batch API',
+        fields: [
+          { label: 'Create Batch', type: 'display', value: `${apiBaseUrl}/api/posting-batches/generic-journal-csv`, hint: 'POST generated entries into a durable CSV artifact batch.' },
+          { label: 'List Batches', type: 'display', value: `${apiBaseUrl}/api/posting-batches`, hint: 'External systems can poll batch metadata before downloading artifacts.' },
+          { label: 'Download Pattern', type: 'display', value: `${apiBaseUrl}/api/posting-batches/{batch_id}/artifact.csv`, hint: 'Download the exact CSV artifact for a posted batch.' }
+        ]
+      },
+      {
+        title: 'Export Format',
+        fields: [
+          { label: 'File Name Pattern', type: 'text', value: 'ledgerise-journals-{batch_id}.csv', hint: 'Used when returning the durable CSV artifact.' },
+          { label: 'Amount Unit', type: 'select', options: ['Major unit (naira, dollars)', 'Smallest unit (kobo, cents)'], value: 'Major unit (naira, dollars)', hint: 'Controls exported CSV display only.' },
+          { label: 'Include Source Transaction ID', type: 'select', options: ['Yes', 'No'], value: 'Yes', hint: 'Keeps audit traceability for downstream imports.' }
+        ]
+      },
+      {
+        title: 'Batch Rules',
+        fields: [
+          { label: 'Idempotency Header', type: 'display', value: 'Idempotency-Key', hint: 'Repeat calls with the same key return the same posting batch instead of duplicating journal exports.' },
+          { label: 'API Key Scope', type: 'display', value: 'posting_batches:create/read + posting_artifacts:download', hint: 'Required scopes for an external file exchange integration.' }
+        ]
+      }
+    ]
+  }
+};
 
 const emptyRuleForm: RuleFormState = {
   productLine: 'consumer-app',
@@ -135,11 +431,18 @@ const emptyRuleForm: RuleFormState = {
 };
 
 export function App() {
-  const [screen, setScreen] = useState<Screen>('mapping-rules');
+  const [screen, setScreen] = useState<Screen>('transactions');
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('coa');
   const [accounts, setAccounts] = useState<ChartAccount[]>([]);
+  const [adapters, setAdapters] = useState<AdapterRecord[]>([]);
   const [rules, setRules] = useState<MappingRule[]>([]);
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
+  const [transactionPage, setTransactionPage] = useState<PageInfo>({
+    limit: transactionPageSize,
+    offset: 0,
+    total: 0
+  });
+  const [transactionOffset, setTransactionOffset] = useState(0);
   const [transactionFilter, setTransactionFilter] = useState<'all' | 'unmapped'>('all');
   const [transactionStatusFilter, setTransactionStatusFilter] = useState<TransactionStatusFilter>('all');
   const [transactionPostingFilter, setTransactionPostingFilter] = useState<PostingDisplayStatus | 'all'>('all');
@@ -159,10 +462,11 @@ export function App() {
     name: '',
     type: 'asset' as AccountType
   });
+  const transactionImportInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     void refreshOperationalData();
-  }, [journalFilter]);
+  }, [journalFilter, transactionOffset]);
 
   const activeRules = rules.filter((rule) => rule.status === 'active');
   const inactiveRules = rules.filter((rule) => rule.status === 'inactive');
@@ -182,15 +486,19 @@ export function App() {
         journalFilter === 'all'
           ? '/api/journal-entries'
           : `/api/journal-entries?posting_status=${journalFilter}`;
-      const [coaResponse, rulesResponse, transactionResponse, journalResponse] = await Promise.all([
+      const transactionPath = `/api/transactions?limit=${transactionPageSize}&offset=${transactionOffset}`;
+      const [coaResponse, adapterResponse, rulesResponse, transactionResponse, journalResponse] = await Promise.all([
         apiGet<{ records: ChartAccount[] }>('/api/coa'),
+        apiGet<{ records: AdapterRecord[] }>('/api/adapters'),
         apiGet<{ records: MappingRule[] }>('/api/mapping-rules'),
-        apiGet<{ records: TransactionRecord[] }>('/api/transactions'),
+        apiGet<{ records: TransactionRecord[]; page: PageInfo }>(transactionPath),
         apiGet<{ records: JournalEntry[] }>(journalPath)
       ]);
       setAccounts(coaResponse.records);
+      setAdapters(adapterResponse.records);
       setRules(rulesResponse.records);
       setTransactions(transactionResponse.records);
+      setTransactionPage(transactionResponse.page);
       setJournalEntries(journalResponse.records);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Failed to load Ledgerise data');
@@ -265,6 +573,33 @@ export function App() {
     }
   }
 
+  async function importGenericCsv(file: File) {
+    setError('');
+    setNotice('');
+
+    try {
+      const content = await file.text();
+      const result = await apiPost<{
+        imported: number;
+        duplicates: number;
+        rejected: number;
+        row_errors?: unknown[];
+      }>('/api/import/generic-csv', {
+        filename: file.name,
+        content
+      });
+      setNotice(
+        `Imported ${result.imported} transactions` +
+          (result.duplicates ? `, ${result.duplicates} duplicates` : '') +
+          (result.row_errors?.length ? `, ${result.row_errors.length} row errors` : '')
+      );
+      setTransactionOffset(0);
+      await refreshOperationalData();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Failed to import CSV data');
+    }
+  }
+
   function editRule(rule: MappingRule) {
     setRuleForm({
       id: rule.id,
@@ -328,6 +663,34 @@ export function App() {
     setSelectedTransaction(null);
   }
 
+  async function saveAdapterConfiguration(adapter: AdapterRecord, config: unknown) {
+    const result = await apiPatch<{ record: AdapterRecord }>(
+      `/api/adapters/${encodeURIComponent(adapter.name)}/config`,
+      {
+        enabled: adapter.enabled ?? true,
+        config
+      }
+    );
+    setAdapters((current) =>
+      current.map((item) => (item.name === result.record.name ? { ...item, ...result.record } : item))
+    );
+    setNotice(`Saved ${adapter.name} adapter configuration`);
+  }
+
+  async function toggleAdapterConfiguration(adapter: AdapterRecord, enabled: boolean) {
+    const result = await apiPatch<{ record: AdapterRecord }>(
+      `/api/adapters/${encodeURIComponent(adapter.name)}/config`,
+      {
+        enabled,
+        config: adapter.config ?? defaultAdapterOperationalConfig(adapter.name)
+      }
+    );
+    setAdapters((current) =>
+      current.map((item) => (item.name === result.record.name ? { ...item, ...result.record } : item))
+    );
+    setNotice(`${adapter.name} ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
   function mapTransaction(transaction: TransactionRecord) {
     setRuleForm({
       ...emptyRuleForm,
@@ -378,9 +741,12 @@ export function App() {
         {notice ? <Toast message={notice} onClose={() => setNotice('')} /> : null}
         {screen === 'transactions' ? (
           <TransactionsView
+            error={error}
+            importInputRef={transactionImportInputRef}
             journalEntries={journalEntries}
             loading={loading}
             mapTransaction={mapTransaction}
+            importGenericCsv={importGenericCsv}
             selectedTransaction={selectedTransaction}
             selectTransaction={setSelectedTransaction}
             closeTransactionDrawer={closeTransactionDrawer}
@@ -395,6 +761,8 @@ export function App() {
             dateTo={transactionDateTo}
             setDateTo={setTransactionDateTo}
             openTransactionJournal={openTransactionJournal}
+            page={transactionPage}
+            setTransactionOffset={setTransactionOffset}
             transactions={transactions}
           />
         ) : null}
@@ -439,10 +807,14 @@ export function App() {
             settingsTab={settingsTab}
             setSettingsTab={setSettingsTab}
             accounts={accounts}
+            adapters={adapters}
             coaForm={coaForm}
             setCoaForm={setCoaForm}
             saveCoaAccount={saveCoaAccount}
+            saveAdapterConfiguration={saveAdapterConfiguration}
+            toggleAdapterConfiguration={toggleAdapterConfiguration}
             error={error}
+            setNotice={setNotice}
           />
         ) : null}
       </main>
@@ -467,6 +839,9 @@ function NavButton({
 }
 
 function TransactionsView(props: {
+  error: string;
+  importGenericCsv: (file: File) => Promise<void>;
+  importInputRef: RefObject<HTMLInputElement>;
   journalEntries: JournalEntry[];
   loading: boolean;
   mapTransaction: (transaction: TransactionRecord) => void;
@@ -484,9 +859,14 @@ function TransactionsView(props: {
   dateTo: string;
   setDateTo: (value: string) => void;
   openTransactionJournal: (entry: JournalEntry) => void;
+  page: PageInfo;
+  setTransactionOffset: (offset: number) => void;
   transactions: TransactionRecord[];
 }) {
   const {
+    error,
+    importGenericCsv,
+    importInputRef,
     journalEntries,
     loading,
     mapTransaction,
@@ -504,6 +884,8 @@ function TransactionsView(props: {
     dateTo,
     setDateTo,
     openTransactionJournal,
+    page,
+    setTransactionOffset,
     transactions
   } = props;
   const settled = transactions.filter((transaction) => transaction.status === 'settled').length;
@@ -519,6 +901,10 @@ function TransactionsView(props: {
     if (postingFilter !== 'all' && journalStatus !== postingFilter) return false;
     return transactionWithinDateRange(transaction, dateFrom, dateTo);
   });
+  const pageStart = page.total === 0 ? 0 : page.offset + 1;
+  const pageEnd = Math.min(page.offset + page.limit, page.total);
+  const canPageBack = page.offset > 0;
+  const canPageForward = page.offset + page.limit < page.total;
 
   return (
     <section className="screen active">
@@ -527,10 +913,26 @@ function TransactionsView(props: {
           <h1>Transactions</h1>
           <p>Canonical records ingested by inbound adapters before mapping and journal generation</p>
         </div>
+        <div className="page-actions">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void importGenericCsv(file);
+            }}
+          />
+          <button className="btn btn-primary" onClick={() => importInputRef.current?.click()}>
+            Import Data
+          </button>
+        </div>
       </div>
 
       <div className="stat-bar cols-4">
-        <StatCell label="Total" value={String(transactions.length)} sub="canonical records stored" />
+        <StatCell label="Total" value={String(page.total)} sub="canonical records stored" />
         <StatCell label="Settled" value={String(settled)} sub="eligible for journal generation" tone="ok" />
         <StatCell label="Unmapped" value={String(unmapped)} sub="journaled to suspense" tone={unmapped ? 'warn' : undefined} />
         <StatCell label="Pending/Test" value={String(pending + test)} sub="blocked from posting" />
@@ -584,6 +986,7 @@ function TransactionsView(props: {
           <div className="spacer" />
           <span className="stat-sub">{loading ? 'Loading transactions...' : `${visibleTransactions.length} transactions`}</span>
         </div>
+        {error ? <div className="form-error journal-error">{error}</div> : null}
 
         <div className="table-wrap">
           <table className="tbl">
@@ -634,6 +1037,29 @@ function TransactionsView(props: {
             </tbody>
           </table>
         </div>
+        {page.total > transactionPageSize ? (
+          <div className="table-pagination">
+            <span className="stat-sub">
+              Showing {pageStart}-{pageEnd} of {page.total}
+            </span>
+            <div className="pagination-actions">
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={!canPageBack || loading}
+                onClick={() => setTransactionOffset(Math.max(0, page.offset - transactionPageSize))}
+              >
+                Previous
+              </button>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={!canPageForward || loading}
+                onClick={() => setTransactionOffset(page.offset + transactionPageSize)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className={`drawer-overlay${selectedTransaction ? ' open' : ''}`} onClick={closeTransactionDrawer} />
@@ -941,9 +1367,6 @@ function JournalLogView(props: {
           <p>Double-entry records generated by the engine and queued for outbound accounting adapters</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary" onClick={() => exportJournalEntriesCsv(entries, accounts, filter)}>
-            Export CSV
-          </button>
           <button className="btn btn-primary" onClick={() => setFilter('generated')}>
             Run Engine Now
           </button>
@@ -1238,12 +1661,30 @@ function SettingsView(props: {
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   accounts: ChartAccount[];
+  adapters: AdapterRecord[];
   coaForm: { code: string; name: string; type: AccountType };
   setCoaForm: (form: { code: string; name: string; type: AccountType }) => void;
   saveCoaAccount: (event: FormEvent) => void;
+  saveAdapterConfiguration: (adapter: AdapterRecord, config: unknown) => Promise<void>;
+  toggleAdapterConfiguration: (adapter: AdapterRecord, enabled: boolean) => Promise<void>;
   error: string;
+  setNotice: (notice: string) => void;
 }) {
-  const { settingsTab, setSettingsTab, accounts, coaForm, setCoaForm, saveCoaAccount, error } = props;
+  const {
+    settingsTab,
+    setSettingsTab,
+    accounts,
+    adapters,
+    coaForm,
+    setCoaForm,
+    saveCoaAccount,
+    saveAdapterConfiguration,
+    toggleAdapterConfiguration,
+    error
+  } = props;
+  const [selectedAdapterName, setSelectedAdapterName] = useState<string | null>(null);
+
+  const selectedAdapter = adapters.find((adapter) => adapter.name === selectedAdapterName) ?? null;
 
   return (
     <section className="screen active">
@@ -1258,12 +1699,15 @@ function SettingsView(props: {
           <div className="settings-sidebar-label">Configuration</div>
           {(['coa', 'schema', 'adapters', 'users', 'system'] as SettingsTab[]).map((tab) => (
             <button key={tab} className={`settings-nav-btn${settingsTab === tab ? ' active' : ''}`} onClick={() => setSettingsTab(tab)}>
+              <SettingsTabIcon tab={tab} />
               {tab === 'coa' ? 'COA Reference' : labelizeTab(tab)}
             </button>
           ))}
         </aside>
         <div className="settings-content">
-          {settingsTab === 'coa' ? (
+          {settingsTab === 'schema' ? (
+            <SchemaSettingsPanel />
+          ) : settingsTab === 'coa' ? (
             <div className="settings-panel active">
               <h2>COA Reference</h2>
               <p className="panel-desc">Account codes used in mapping rules.</p>
@@ -1300,6 +1744,18 @@ function SettingsView(props: {
                 </table>
               </div>
             </div>
+          ) : settingsTab === 'adapters' ? (
+            <AdapterSettingsPanel
+              adapters={adapters}
+              onCloseDrawer={() => setSelectedAdapterName(null)}
+              onConfigure={(adapter) => setSelectedAdapterName(adapter.name)}
+              onSave={async (adapter, config) => {
+                await saveAdapterConfiguration(adapter, config);
+                setSelectedAdapterName(null);
+              }}
+              onToggleAdapter={(adapter, enabled) => void toggleAdapterConfiguration(adapter, enabled)}
+              selectedAdapter={selectedAdapter}
+            />
           ) : (
             <Placeholder title={labelizeTab(settingsTab)} subtitle="This settings panel will be wired in its corresponding phase." embedded />
           )}
@@ -1309,8 +1765,863 @@ function SettingsView(props: {
   );
 }
 
+function AdapterSettingsPanel(props: {
+  adapters: AdapterRecord[];
+  selectedAdapter: AdapterRecord | null;
+  onConfigure: (adapter: AdapterRecord) => void;
+  onCloseDrawer: () => void;
+  onSave: (adapter: AdapterRecord, config: unknown) => Promise<void>;
+  onToggleAdapter: (adapter: AdapterRecord, enabled: boolean) => void;
+}) {
+  const { adapters, selectedAdapter, onConfigure, onCloseDrawer, onSave, onToggleAdapter } = props;
+  const inboundAdapters = adapters.filter((adapter) => adapter.direction === 'inbound');
+  const outboundAdapters = adapters.filter((adapter) => adapter.direction === 'outbound');
+
+  return (
+    <div className="settings-panel active">
+      <h2>Adapters</h2>
+      <p className="panel-desc">
+        Registered inbound and outbound adapters. Adapter configuration controls how source records are normalized and how generated journal entries leave Ledgerise.
+      </p>
+
+      <div className="section-group-label">Inbound</div>
+      <div className="adapter-list" style={{ marginBottom: 'var(--s8)' }}>
+        {inboundAdapters.map((adapter) => (
+          <AdapterCard
+            key={adapter.name}
+            adapter={adapter}
+            enabled={adapter.enabled ?? true}
+            onConfigure={onConfigure}
+            onToggleAdapter={onToggleAdapter}
+          />
+        ))}
+      </div>
+
+      <div className="section-group-label">Outbound</div>
+      <p className="outbound-desc">
+        Outbound adapters receive batched journal entries from the engine and post or export them for accounting systems.
+      </p>
+      <div className="adapter-list">
+        {outboundAdapters.map((adapter) => (
+          <AdapterCard
+            key={adapter.name}
+            adapter={adapter}
+            enabled={adapter.enabled ?? true}
+            onConfigure={onConfigure}
+            onToggleAdapter={onToggleAdapter}
+          />
+        ))}
+      </div>
+
+      <AdapterConfigDrawer adapter={selectedAdapter} onClose={onCloseDrawer} onSave={onSave} />
+    </div>
+  );
+}
+
+function SchemaSettingsPanel() {
+  const canonicalFields = [
+    ['id', 'Ledgerise-generated UUID for the normalized record.', 'Yes', 'Internal identity', '9f7a...c22'],
+    ['source_id', 'Original provider reference, when available.', 'No', 'Deduplication and audit trail', 'SRC_839104'],
+    ['source', 'Adapter, source system, and live/test environment.', 'Yes', 'Traceability and test blocking', 'generic-api / live'],
+    ['status', 'Settlement state: pending, settled, failed, reversed, disputed.', 'Yes', 'Posting eligibility', 'settled'],
+    ['type', 'Business category of the transaction using dot notation.', 'Yes', 'Mapping context and reporting', 'payment.electricity'],
+    ['direction', 'Money movement from the operator perspective.', 'Yes', 'Journal line direction', 'debit'],
+    ['amount', 'Positive amount in the smallest currency unit.', 'Yes', 'Journal value', '500000'],
+    ['currency', 'ISO 4217 three-letter currency code.', 'Yes', 'Accounting currency', 'NGN'],
+    ['product', 'Product line, biller, and biller category.', 'Yes', 'Primary mapping lookup', 'consumer-app / ikeja-electric'],
+    ['principal', 'Customer, merchant, agent, or internal actor. PII must be masked.', 'Yes', 'Audit trail', 'customer / ***4821'],
+    ['fee', 'Platform fee, processing fee, and net fee when present.', 'No', 'Revenue/cost splits', 'platform_fee: 5000'],
+    ['metadata', 'Source-specific extra fields that do not affect mapping.', 'Yes', 'Debugging and audit context', 'terminal_id: POS-17']
+  ];
+  const modeCards = [
+    ['Webhook', 'Source system pushes each event to Ledgerise. Best for payment processors that support reliable event callbacks.', 'generic-webhook'],
+    ['Poll', 'Ledgerise calls the source API on a schedule using a cursor such as last fetched time or source ID.', 'generic-poll'],
+    ['File Import', 'Operator uploads CSV exports. Useful for onboarding, backfills, banks, and providers without an API.', 'generic-csv'],
+    ['Manual Entry', 'Structured one-off entry for exceptions. Stored through the same canonical schema.', 'manual-entry']
+  ];
+  const typeGroups = [
+    ['Payments', ['payment.airtime', 'payment.data', 'payment.electricity', 'payment.cable-tv', 'payment.internet', 'payment.merchant']],
+    ['Transfers & Collections', ['transfer.wallet-to-bank', 'transfer.bank-to-wallet', 'collection.pos', 'collection.web', 'collection.ussd', 'collection.bank-transfer']],
+    ['Fees, FX & Cards', ['fee.platform', 'fee.processing', 'fx.conversion', 'fx.gain', 'card.spend', 'card.chargeback']],
+    ['Lending, Savings & Agency', ['loan.disbursement', 'loan.repayment.interest', 'savings.deposit', 'investment.purchase', 'agency.cash-in', 'agency.commission']]
+  ];
+
+  return (
+    <div className="settings-panel active">
+      <h2>Schema &amp; Types</h2>
+      <p className="panel-desc">Operator-facing reference for the canonical transaction record. These fields are produced by inbound adapters and consumed by the journal engine.</p>
+
+      <div className="schema-flow">
+        {[
+          ['Raw source event', 'Webhook, poll result, file row, or manual entry'],
+          ['Inbound adapter', 'Validates, masks PII, converts amounts, normalizes fields'],
+          ['Canonical record', 'Single stable format for mapping and journal generation']
+        ].map(([title, detail], index) => (
+          <FragmentWithArrow key={title} index={index}>
+            <div className="schema-flow-step">
+              <span className="schema-flow-num">{index + 1}</span>
+              <div><strong>{title}</strong><span>{detail}</span></div>
+            </div>
+          </FragmentWithArrow>
+        ))}
+      </div>
+
+      <div className="schema-reference-grid">
+        <section className="schema-card">
+          <div className="schema-card-title">Posting Rules</div>
+          <div className="schema-rule-list">
+            <div><span className="chip income">Posted</span> Only <code>settled</code> records with <code>settled_at</code> can become journal entries.</div>
+            <div><span className="chip expense">Blocked</span> <code>failed</code>, <code>pending</code>, and <code>disputed</code> records are stored but not posted.</div>
+            <div><span className="chip suspense">Review</span> No matching mapping rule means suspense/unmapped, never silent dropping.</div>
+            <div><span className="chip asset">Reversal</span> <code>reversed</code> records mirror the original posted journal when <code>reversal_of</code> is present.</div>
+          </div>
+        </section>
+
+        <section className="schema-card">
+          <div className="schema-card-title">Mapping Priority</div>
+          <ol className="schema-ordered-list">
+            <li><code>product.line</code> + <code>product.biller</code></li>
+            <li><code>product.line</code> + <code>product.biller_category</code></li>
+            <li><code>product.line</code> catch-all</li>
+            <li>Suspense account if no rule matches</li>
+          </ol>
+        </section>
+      </div>
+
+      <div className="section-group-label">Canonical Fields</div>
+      <div className="table-card" style={{ marginBottom: 'var(--s6)' }}>
+        <table className="tbl schema-table">
+          <thead>
+            <tr><th>Field</th><th>Meaning</th><th>Required</th><th>Used For</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            {canonicalFields.map(([field, meaning, required, usedFor, example]) => (
+              <tr key={field}>
+                <td className="mono">{field}</td>
+                <td>{meaning}</td>
+                <td><span className={`badge ${required === 'Yes' ? 'healthy' : 'auditor-role'}`}>{required}</span></td>
+                <td>{usedFor}</td>
+                <td className="mono">{example}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="section-group-label">Adapter Modes</div>
+      <div className="schema-mode-grid">
+        {modeCards.map(([title, detail, tag]) => (
+          <div className="schema-mode-card" key={title}>
+            <div className="schema-mode-title">{title}</div>
+            <p>{detail}</p>
+            <span className="type-tag">{tag}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="section-group-label" style={{ marginTop: 'var(--s6)' }}>Transaction Type Library</div>
+      <div className="schema-type-grid">
+        {typeGroups.map(([title, types]) => (
+          <div className="schema-type-card" key={title as string}>
+            <div className="schema-type-title">{title}</div>
+            <div className="schema-type-list">
+              {(types as string[]).map((type) => <span key={type}>{type}</span>)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="schema-note">
+        Custom types are allowed when they use dot notation, for example <code>payment.toll</code> or <code>agency.crop-insurance</code>. A matching mapping rule must exist or the transaction is held as unmapped.
+      </div>
+    </div>
+  );
+}
+
+function FragmentWithArrow({ children, index }: { children: ReactNode; index: number }) {
+  return (
+    <>
+      {index > 0 ? <div className="schema-flow-arrow">→</div> : null}
+      {children}
+    </>
+  );
+}
+
+function AdapterCard(props: {
+  adapter: AdapterRecord;
+  enabled: boolean;
+  onConfigure: (adapter: AdapterRecord) => void;
+  onToggleAdapter: (adapter: AdapterRecord, enabled: boolean) => void;
+}) {
+  const { adapter, enabled, onConfigure, onToggleAdapter } = props;
+  const template = adapterConfigTemplates[adapter.name];
+  const system = adapter.source_system ?? adapter.target_system ?? 'generic';
+
+  return (
+    <div className="adapter-card">
+      <div className="adapter-card-top">
+        <div className="adapter-meta">
+          <div className="adapter-icon" aria-hidden="true">
+            <AdapterGlyph adapterName={adapter.name} direction={adapter.direction} />
+          </div>
+          <div>
+            <div className="adapter-name">{adapter.name}</div>
+            <div className="adapter-desc">
+              {template?.summary ?? `${labelizeText(adapter.direction)} adapter for ${system}`} · {template?.subtitle ?? labelizeText(adapter.direction)}
+            </div>
+            <div className="adapter-sub">
+              <span className={`badge ${enabled ? 'healthy' : 'failed'}`}><span className="badge-dot" />{enabled ? 'Enabled' : 'Disabled'}</span>
+              <span>·</span><span>v{adapter.version}</span>
+              <span>·</span><span>Modes: {adapter.modes.join(', ')}</span>
+              <span>·</span><span>Currencies: {adapter.currency_codes.join(', ')}</span>
+              <span>·</span><span>Runtime: {adapter.runtime.type}</span>
+            </div>
+          </div>
+        </div>
+        <div className="adapter-controls">
+          <button className="btn btn-secondary btn-sm" type="button" onClick={() => onConfigure(adapter)}>Configure</button>
+          <label className="toggle" title="Toggle adapter active">
+            <input type="checkbox" checked={enabled} onChange={(event) => onToggleAdapter(adapter, event.target.checked)} />
+            <span className="toggle-track" />
+            <span className="toggle-thumb" />
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdapterConfigDrawer(props: {
+  adapter: AdapterRecord | null;
+  onClose: () => void;
+  onSave: (adapter: AdapterRecord, config: unknown) => Promise<void>;
+}) {
+  const { adapter, onClose, onSave } = props;
+  const template = adapter ? getAdapterConfigTemplate(adapter) : null;
+  const formRef = useRef<HTMLFormElement | null>(null);
+
+  return (
+    <>
+      <div className={`drawer-overlay${adapter ? ' open' : ''}`} onClick={onClose} />
+      <form
+        ref={formRef}
+        id="ac-drawer"
+        className={`drawer${adapter ? ' open' : ''}`}
+        aria-hidden={!adapter}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!adapter || !formRef.current) return;
+          void onSave(adapter, buildAdapterOperationalConfig(adapter, new FormData(formRef.current)));
+        }}
+      >
+        <div className="drawer-header">
+          <div className="drawer-hd">
+            <h2>{adapter?.name ?? 'Adapter configuration'}</h2>
+            <div className="mono-id">{template?.subtitle ?? 'Adapter configuration'}</div>
+          </div>
+          <button className="drawer-close" type="button" onClick={onClose} aria-label="Close adapter configuration drawer">×</button>
+        </div>
+        <div className="drawer-body">
+          {adapter && template ? (
+            template.sections.map((section) => (
+              <div className="drawer-section" key={section.title}>
+                <div className="drawer-section-title">{section.title}</div>
+                {section.desc ? <p className="config-section-desc">{section.desc}</p> : null}
+                {section.fields.map((field, index) => (
+                  <AdapterConfigFieldView field={field} key={`${section.title}-${index}`} />
+                ))}
+              </div>
+            ))
+          ) : (
+            <p className="panel-desc">Select an adapter to configure.</p>
+          )}
+        </div>
+        <div className="drawer-footer">
+          <span className="dim" style={{ fontSize: 12 }}>
+            {adapter ? `Registry: ${adapter.direction} · ${adapter.modes.join(', ')}` : ''}
+          </span>
+          <div className="drawer-actions">
+            <button className="btn btn-ghost btn-sm" type="button" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary btn-sm" type="submit" disabled={!adapter}>Save Configuration</button>
+          </div>
+        </div>
+      </form>
+    </>
+  );
+}
+
+function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [detected, setDetected] = useState(false);
+  const [mappingRows, setMappingRows] = useState(field.type === 'mapping' ? field.rows : []);
+  const sampleRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const mappingId = field.type === 'mapping' ? field.id : '';
+
+  useEffect(() => {
+    if (field.type === 'mapping') {
+      setMappingRows(field.rows);
+      setDetected(false);
+      setPreviewOpen(false);
+    }
+  }, [mappingId]);
+
+  if (field.type === 'display') {
+    return (
+      <div className="form-field">
+        <label>{field.label}</label>
+        <div className="display-value">
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{field.value}</span>
+          <button className="btn-link primary copy-btn" type="button" onClick={() => void navigator.clipboard?.writeText(field.value)}>Copy</button>
+        </div>
+        <div className="hint">{field.hint}</div>
+      </div>
+    );
+  }
+
+  if (field.type === 'text' || field.type === 'password' || field.type === 'number') {
+    return (
+      <div className="form-field">
+        <label>{field.label}</label>
+        <input
+          type={field.type}
+          name={field.key ? `field:${field.key}` : undefined}
+          defaultValue={field.value}
+          placeholder={field.type === 'password' ? '••••••••••••' : undefined}
+        />
+        <div className="hint">{field.hint}</div>
+      </div>
+    );
+  }
+
+  if (field.type === 'select') {
+    return (
+      <div className="form-field">
+        <label>{field.label}</label>
+        <select name={field.key ? `field:${field.key}` : undefined} defaultValue={field.value}>
+          {field.options.map((option) => <option key={option}>{option}</option>)}
+        </select>
+        <div className="hint">{field.hint}</div>
+      </div>
+    );
+  }
+
+  if (field.type === 'action') {
+    return (
+      <div className="form-field">
+        <div className="connect-field">
+          <button className="btn btn-secondary btn-sm" type="button">{field.text}</button>
+          <span className={`connect-status ${field.statusClass}`}>{field.status}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (field.type !== 'mapping') {
+    return null;
+  }
+
+  const mappingField = field;
+
+  return (
+    <>
+      <div className="field-map-sample">
+        <div className="field-map-sample-top">
+          <div>
+            <div className="field-map-sample-title">Sample {mappingField.sourceLabel ? 'file row' : 'payload'}</div>
+            <div className={`field-map-status${detected ? ' ok' : ''}`}>
+              {detected ? `${mappingRows.length} suggested mappings detected. Review transforms before saving.` : 'Paste a sample, then detect suggested mappings.'}
+            </div>
+          </div>
+          <button
+            className="btn btn-secondary btn-sm"
+            type="button"
+            onClick={() => {
+              const sample = sampleRef.current?.value ?? mappingField.preview.source;
+              const sourceFields = detectSourceFields(sample, Boolean(mappingField.sourceLabel));
+              setMappingRows((current) => applyDetectedFields(current, sourceFields));
+              setDetected(true);
+            }}
+          >
+            Detect fields
+          </button>
+        </div>
+        <textarea ref={sampleRef} spellCheck={false} defaultValue={mappingField.preview.source} />
+      </div>
+      <div className="field-map">
+        <div className="field-map-head">
+          <span>{mappingField.sourceLabel ?? 'Source field'}</span>
+          <span>Standard Ledgerise field</span>
+          <span>Required</span>
+          <span />
+        </div>
+        <div className="field-map-body">
+          {mappingRows.map((row, index) => (
+            <div className="field-map-row" key={`${row.sourcePath}-${index}`}>
+              <input
+                type="text"
+                name={`map:${mappingField.id}:${index}:sourcePath`}
+                value={row.sourcePath}
+                onChange={(event) => updateMappingRow(setMappingRows, index, { sourcePath: event.target.value })}
+              />
+              <select
+                name={`map:${mappingField.id}:${index}:canonicalField`}
+                value={row.canonicalField}
+                onChange={(event) => updateMappingRow(setMappingRows, index, { canonicalField: event.target.value })}
+              >
+                {canonicalFieldOptions.map((option) => <option key={option}>{option}</option>)}
+              </select>
+              <label className="field-map-required">
+                <input
+                  type="checkbox"
+                  name={`map:${mappingField.id}:${index}:required`}
+                  checked={row.required}
+                  onChange={(event) => updateMappingRow(setMappingRows, index, { required: event.target.checked })}
+                />
+              </label>
+              <div className="field-map-actions">
+                <button
+                  className="btn btn-ghost btn-sm"
+                  type="button"
+                  aria-label="Remove mapping row"
+                  onClick={() => setMappingRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="field-map-toolbar">
+        <button
+          className="btn btn-secondary btn-sm"
+          type="button"
+          onClick={() =>
+            setMappingRows((current) => [
+              ...current,
+              { sourcePath: '', canonicalField: 'metadata', transform: 'copy', defaultValue: '', required: false }
+            ])
+          }
+        >
+          Add field
+        </button>
+        <button className="btn btn-ghost btn-sm" type="button" onClick={() => setPreviewOpen(true)}>Preview mapping</button>
+      </div>
+      <div className="field-map-note">Detected source fields are mapped onto Ledgerise canonical fields. Adapter defaults still handle normalization, validation, and required canonical structure.</div>
+      {previewOpen ? (
+        <div className="field-map-preview">
+          <div className="field-map-preview-title">Preview output</div>
+          <pre>{mappingField.preview.output}</pre>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function getAdapterConfigTemplate(adapter: AdapterRecord): AdapterConfigTemplate | null {
+  const template = adapterConfigTemplates[adapter.name];
+  if (!template) return null;
+
+  const config = isRecord(adapter.config) ? adapter.config : {};
+  return {
+    ...template,
+    sections: template.sections.map((section) => ({
+      ...section,
+      fields: section.fields.map((field) => {
+        if (field.type !== 'mapping') return field;
+
+        if (adapter.name === 'generic-csv' && field.id === 'generic-csv-map') {
+          return {
+            ...field,
+            rows: rowsFromMappingConfig(
+              isRecord(config.column_mappings) ? config.column_mappings : undefined,
+              field.rows
+            )
+          };
+        }
+
+        if (adapter.name === 'generic-webhook' && field.id === 'generic-webhook-map') {
+          return {
+            ...field,
+            rows: rowsFromMappingConfig(
+              isRecord(config.field_mappings) ? config.field_mappings : undefined,
+              field.rows
+            )
+          };
+        }
+
+        return field;
+      })
+    }))
+  };
+}
+
+function rowsFromMappingConfig(
+  mapping: Record<string, unknown> | undefined,
+  fallback: AdapterMappingRow[]
+): AdapterMappingRow[] {
+  if (!mapping) return fallback;
+  const fallbackByCanonical = new Map(fallback.map((row) => [row.canonicalField, row]));
+  return Object.entries(mapping)
+    .filter(([, sourcePath]) => typeof sourcePath === 'string' && sourcePath.trim())
+    .map(([canonicalField, sourcePath]) => ({
+      sourcePath: String(sourcePath),
+      canonicalField,
+      transform: fallbackByCanonical.get(canonicalField)?.transform ?? defaultTransformForField(canonicalField),
+      defaultValue: fallbackByCanonical.get(canonicalField)?.defaultValue ?? '',
+      required: fallbackByCanonical.get(canonicalField)?.required ?? requiredCanonicalFields.has(canonicalField)
+    }));
+}
+
+function buildAdapterOperationalConfig(adapter: AdapterRecord, formData: FormData): unknown {
+  if (adapter.name === 'generic-csv') {
+    return {
+      ...defaultAdapterOperationalConfig(adapter.name),
+      column_mappings: mappingRowsToObject(readMappingRows(formData, 'generic-csv-map'))
+    };
+  }
+
+  if (adapter.name === 'generic-webhook') {
+    return {
+      ...defaultAdapterOperationalConfig(adapter.name),
+      field_mappings: mappingRowsToObject(readMappingRows(formData, 'generic-webhook-map'))
+    };
+  }
+
+  return {
+    ...defaultAdapterOperationalConfig(adapter.name),
+    ...readFieldValues(formData)
+  };
+}
+
+function defaultAdapterOperationalConfig(adapterName: string): Record<string, unknown> {
+  if (adapterName === 'generic-csv') {
+    return {
+      source_system: 'csv-backfill',
+      environment: 'live',
+      column_mappings: {
+        source_id: 'reference',
+        occurred_at: 'occurred_at',
+        settled_at: 'settled_at',
+        status: 'status',
+        type: 'type',
+        direction: 'direction',
+        amount: 'amount',
+        currency: 'currency',
+        channel: 'channel',
+        'principal.id': 'principal_id',
+        'principal.type': 'principal_type',
+        'principal.reference': 'principal_reference',
+        'product.line': 'product_line',
+        'product.biller': 'biller',
+        'product.biller_category': 'biller_category'
+      },
+      metadata_columns: {
+        token: 'token'
+      }
+    };
+  }
+
+  if (adapterName === 'generic-webhook') {
+    return {
+      source_system: 'generic-api',
+      environment: 'live',
+      field_mappings: {
+        source_id: 'txn_ref',
+        occurred_at: 'paid_at',
+        status: 'state',
+        amount: 'value',
+        type: 'service',
+        direction: 'direction',
+        currency: 'currency',
+        channel: 'channel',
+        'product.line': 'product_line',
+        'product.biller': 'biller',
+        'product.biller_category': 'biller_category',
+        'principal.id': 'customer_id',
+        'principal.reference': 'customer_phone',
+        'principal.type': 'principal_type'
+      },
+      defaults: {
+        direction: 'debit',
+        currency: 'NGN',
+        channel: 'api',
+        'product.line': 'consumer-app',
+        'principal.type': 'customer'
+      },
+      metadata_paths: {
+        raw_service: 'service'
+      },
+      amount_multiplier: 100
+    };
+  }
+
+  if (adapterName === 'generic-journal-csv') {
+    return {
+      file_name_pattern: 'ledgerise-journals-{batch_id}.csv',
+      amount_unit: 'major',
+      include_source_transaction_id: true,
+      include_mapping_rule_id: true,
+      idempotency_header: 'Idempotency-Key'
+    };
+  }
+
+  if (adapterName === 'zoho-books') {
+    return {
+      organization_id_env: 'ZOHO_ORGANIZATION_ID',
+      client_id_env: 'ZOHO_CLIENT_ID',
+      journal_status: 'draft',
+      batch_size: 100,
+      account_map_env: 'ZOHO_ACCOUNT_MAP_JSON'
+    };
+  }
+
+  return {};
+}
+
+function readMappingRows(formData: FormData, mapId: string): AdapterMappingRow[] {
+  const rows: Record<string, Partial<AdapterMappingRow>> = {};
+  for (const [key, value] of formData.entries()) {
+    const parts = key.split(':');
+    if (parts[0] !== 'map' || parts[1] !== mapId || parts.length !== 4) continue;
+    const [, , index, field] = parts;
+    if (!index || !field) continue;
+    rows[index] = {
+      ...rows[index],
+      [field]: field === 'required' ? true : String(value)
+    };
+  }
+
+  return Object.values(rows)
+    .map((row) => ({
+      sourcePath: row.sourcePath ?? '',
+      canonicalField: row.canonicalField ?? '',
+      transform: row.transform ?? 'copy',
+      defaultValue: row.defaultValue ?? '',
+      required: Boolean(row.required)
+    }))
+    .filter((row) => row.sourcePath && row.canonicalField);
+}
+
+function mappingRowsToObject(rows: AdapterMappingRow[]) {
+  return rows.reduce<Record<string, string>>((current, row) => {
+    current[row.canonicalField] = row.sourcePath;
+    return current;
+  }, {});
+}
+
+function readFieldValues(formData: FormData) {
+  const values: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (key.startsWith('field:')) {
+      values[key.slice('field:'.length)] = String(value);
+    }
+  }
+  return values;
+}
+
+function updateMappingRow(
+  setRows: (updater: (current: AdapterMappingRow[]) => AdapterMappingRow[]) => void,
+  index: number,
+  patch: Partial<AdapterMappingRow>
+) {
+  setRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+}
+
+function detectSourceFields(sample: string, csvMode: boolean) {
+  if (csvMode) {
+    const firstLine = sample.trim().split(/\r?\n/)[0] ?? '';
+    return firstLine.split(',').map((field) => field.trim()).filter(Boolean);
+  }
+
+  try {
+    const parsed = JSON.parse(sample);
+    return flattenObjectKeys(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function applyDetectedFields(rows: AdapterMappingRow[], sourceFields: string[]) {
+  return rows.map((row) => ({
+    ...row,
+    sourcePath: sourceSuggestionForCanonical(row.canonicalField, sourceFields) ?? row.sourcePath
+  }));
+}
+
+function sourceSuggestionForCanonical(canonicalField: string, sourceFields: string[]) {
+  const normalized = new Map(sourceFields.map((field) => [normalizeFieldName(field), field]));
+  const preferred = sourceFieldSuggestions[canonicalField] ?? [canonicalField];
+  return preferred.map((field) => normalized.get(normalizeFieldName(field))).find(Boolean);
+}
+
+function flattenObjectKeys(input: unknown, prefix = ''): string[] {
+  if (!isRecord(input)) return [];
+  return Object.entries(input).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return isRecord(value) ? [path, ...flattenObjectKeys(value, path)] : [path];
+  });
+}
+
+function normalizeFieldName(value: string) {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function defaultTransformForField(canonicalField: string) {
+  if (canonicalField.endsWith('_at') || canonicalField === 'occurred_at' || canonicalField === 'settled_at') return 'parse_datetime';
+  if (canonicalField === 'amount') return 'amount_to_minor';
+  if (canonicalField === 'status') return 'enum_map';
+  return 'copy';
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return input !== null && typeof input === 'object' && !Array.isArray(input);
+}
+
+const requiredCanonicalFields = new Set([
+  'source_id',
+  'occurred_at',
+  'status',
+  'amount',
+  'currency',
+  'type',
+  'direction',
+  'product.line'
+]);
+
+const sourceFieldSuggestions: Record<string, string[]> = {
+  source_id: ['reference', 'source_id', 'txn_ref', 'id'],
+  occurred_at: ['occurred_at', 'transaction_date', 'paid_at', 'created_at'],
+  settled_at: ['settled_at', 'settled_date'],
+  status: ['status', 'state'],
+  amount: ['amount', 'value'],
+  currency: ['currency'],
+  type: ['type', 'transaction_type', 'service'],
+  direction: ['direction'],
+  channel: ['channel'],
+  'product.line': ['product_line', 'product', 'service'],
+  'product.biller': ['biller'],
+  'product.biller_category': ['biller_category', 'category'],
+  'principal.reference': ['principal_reference', 'customer_phone', 'customer_reference'],
+  'principal.id': ['principal_id', 'customer_id', 'customer'],
+  'principal.type': ['principal_type']
+};
+
+function AdapterGlyph({ adapterName, direction }: { adapterName: string; direction: AdapterRecord['direction'] }) {
+  if (adapterName.includes('csv')) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6" />
+        <path d="M8 13h8" />
+        <path d="M8 17h8" />
+      </svg>
+    );
+  }
+
+  if (adapterName.includes('webhook')) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7 8h10" />
+        <path d="M7 16h10" />
+        <path d="M4 12h16" />
+        <path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+      </svg>
+    );
+  }
+
+  if (adapterName.includes('poll')) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 12.5a11 11 0 0 1 14 0" />
+        <path d="M2 9a16 16 0 0 1 20 0" />
+        <path d="M8.5 16a6 6 0 0 1 7 0" />
+        <path d="M12 20h.01" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      {direction === 'outbound' ? (
+        <>
+          <path d="M4 12h14" />
+          <path d="M13 7l5 5-5 5" />
+          <path d="M4 5h8" />
+          <path d="M4 19h8" />
+        </>
+      ) : (
+        <>
+          <path d="M20 12H6" />
+          <path d="M11 7l-5 5 5 5" />
+          <path d="M12 5h8" />
+          <path d="M12 19h8" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function SettingsTabIcon({ tab }: { tab: SettingsTab }) {
+  if (tab === 'schema') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 2.5h6l2 2v9H4z" />
+        <path d="M10 2.5v2h2" />
+        <path d="M6.5 7h3" />
+        <path d="M6.5 9.5h3" />
+        <path d="M6.5 12h2" />
+      </svg>
+    );
+  }
+
+  if (tab === 'adapters') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="1" y="4" width="14" height="8" rx="1.5" />
+        <path d="M5 4v8" />
+        <circle cx="9" cy="8" r="1" />
+        <path d="M12 8h1" />
+      </svg>
+    );
+  }
+
+  if (tab === 'coa') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+        <rect x="2" y="2" width="12" height="12" rx="1.5" />
+        <path d="M5 5.5h6" />
+        <path d="M5 8h6" />
+        <path d="M5 10.5h4" />
+      </svg>
+    );
+  }
+
+  if (tab === 'users') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="8" cy="5.5" r="2.5" />
+        <path d="M2 13.5c0-2.76 2.69-5 6-5s6 2.24 6 5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13.5 8A5.5 5.5 0 1 1 2 8" />
+      <path d="M13.5 8V5" />
+      <path d="M13.5 8h-3" />
+    </svg>
+  );
+}
+
 function labelizeTab(tab: SettingsTab) {
   return `${tab.charAt(0).toUpperCase()}${tab.slice(1)}`;
+}
+
+function labelizeText(value: string) {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
@@ -1508,77 +2819,6 @@ function journalTimeline(entry: JournalEntry) {
       time: entry.generated_at
     }
   ];
-}
-
-function exportJournalEntriesCsv(
-  entries: JournalEntry[],
-  accounts: ChartAccount[],
-  filter: JournalEntry['posting_status'] | 'all'
-) {
-  const headers = [
-    'journal_id',
-    'transaction_id',
-    'source_id',
-    'generated_at',
-    'transaction_type',
-    'product_line',
-    'biller',
-    'entry_type',
-    'posting_status',
-    'currency',
-    'journal_amount_minor',
-    'line_order',
-    'line_side',
-    'account_code',
-    'account_name',
-    'line_amount_minor',
-    'attempt_count',
-    'last_posting_error'
-  ];
-
-  const rows = entries.flatMap((entry) =>
-    entry.lines.map((line) => {
-      const account = accounts.find((item) => item.code === line.account_code);
-      return [
-        entry.id,
-        entry.transaction_id,
-        entry.transaction?.source_id ?? '',
-        entry.generated_at,
-        entry.transaction?.type ?? '',
-        entry.transaction?.product_line ?? '',
-        entry.transaction?.product_biller ?? '',
-        entry.entry_type,
-        entry.posting_status,
-        entry.currency,
-        String(entry.amount),
-        String(line.line_order),
-        line.side,
-        line.account_code,
-        account?.name ?? '',
-        String(line.amount),
-        String(entry.attempt_count),
-        entry.last_posting_error ?? ''
-      ];
-    })
-  );
-
-  const csv = [headers, ...rows]
-    .map((row) => row.map(csvCell).join(','))
-    .join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  const stamp = new Date().toISOString().slice(0, 10);
-  link.href = url;
-  link.download = `ledgerise-journal-entries-${filter}-${stamp}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function csvCell(value: string) {
-  return `"${value.replaceAll('"', '""')}"`;
 }
 
 async function apiGet<T>(path: string): Promise<T> {

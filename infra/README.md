@@ -37,6 +37,7 @@ psql "$DATABASE_URL" -f infra/migrations/0001_core_ingestion.sql
 psql "$DATABASE_URL" -f infra/migrations/0002_mapping_rules_and_coa.sql
 psql "$DATABASE_URL" -f infra/migrations/0003_journal_engine.sql
 psql "$DATABASE_URL" -f infra/migrations/0004_posting_queue.sql
+psql "$DATABASE_URL" -f infra/migrations/0005_posting_file_exchange.sql
 ```
 
 ## Seed Data
@@ -68,9 +69,11 @@ DATABASE_URL="$DATABASE_URL" npm run verify:postgres
 DATABASE_URL="$DATABASE_URL" npm run verify:mapping
 DATABASE_URL="$DATABASE_URL" npm run verify:engine
 DATABASE_URL="$DATABASE_URL" npm run verify:posting
+DATABASE_URL="$DATABASE_URL" npm run verify:outbound-csv
+DATABASE_URL="$DATABASE_URL" npm run verify:posting-file-exchange
 ```
 
-These commands verify valid ingestion, duplicate handling, invalid ingestion errors, transaction list/detail reads, mapping/COA behavior, journal engine generation/idempotency, and posting queue retry state.
+These commands verify valid ingestion, duplicate handling, invalid ingestion errors, transaction list/detail reads, mapping/COA behavior, journal engine generation/idempotency, posting queue retry state, outbound CSV posting, API-key-protected durable CSV pickup, and download audit.
 
 ## Ingestion List Query Parameters
 

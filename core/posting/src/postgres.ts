@@ -3,18 +3,24 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 
 import {
+  type ApiKeyPrincipal,
+  type ApiScope,
   type CompletePostingBatchInput,
   type CreatePostingBatchInput,
   type JournalLogEntry,
   type JournalLogLine,
   type ListJournalEntriesInput,
+  type ListPostingBatchesInput,
   type ListPage,
   type ManualRetryInput,
   type PostingAttempt,
+  type PostingArtifact,
   type PostingAttemptStatus,
   type PostingBatch,
   type PostingBatchStatus,
   type PostingRepository,
+  type RecordPostingArtifactDownloadInput,
+  type SavePostingArtifactInput,
   type PostingStatus
 } from './index.js';
 
@@ -71,12 +77,35 @@ interface PostingBatchRow {
   adapter_name: string;
   status: PostingBatchStatus;
   journal_entry_count: number;
+  idempotency_key: string | null;
+  created_by_api_key_id: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
 
 interface ClaimedJournalEntryRow {
   id: string;
+}
+
+interface ApiKeyRow {
+  id: string;
+  operator_id: string;
+  name: string;
+  scopes: string[];
+}
+
+interface PostingArtifactRow {
+  id: string;
+  operator_id: string;
+  posting_batch_id: string;
+  content_type: string;
+  filename: string;
+  content: Buffer;
+  checksum_sha256: string;
+  size_bytes: number;
+  row_count: number;
+  created_by_api_key_id: string | null;
+  created_at: Date | string;
 }
 
 export class PostgresPostingRepository implements PostingRepository {
@@ -94,6 +123,35 @@ export class PostgresPostingRepository implements PostingRepository {
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  async authenticateApiKey(input: {
+    keyHash: string;
+    requiredScope: ApiScope;
+    occurredAt: string;
+  }): Promise<ApiKeyPrincipal | null> {
+    const result = await this.pool.query<ApiKeyRow>(
+      `
+        UPDATE api_keys
+        SET last_used_at = $3, updated_at = now()
+        WHERE
+          key_hash = $1
+          AND enabled = true
+          AND (expires_at IS NULL OR expires_at > $3)
+          AND $2 = ANY(scopes)
+        RETURNING id, operator_id, name, scopes
+      `,
+      [input.keyHash, input.requiredScope, input.occurredAt]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      operatorId: row.operator_id,
+      name: row.name,
+      scopes: row.scopes as ApiScope[]
+    };
   }
 
   async listJournalEntries(
@@ -274,6 +332,24 @@ export class PostgresPostingRepository implements PostingRepository {
     try {
       await client.query('BEGIN');
 
+      if (input.idempotencyKey) {
+        const existing = await client.query<PostingBatchRow>(
+          `
+            SELECT *
+            FROM posting_batches
+            WHERE operator_id = $1 AND adapter_name = $2 AND idempotency_key = $3
+            LIMIT 1
+          `,
+          [input.operatorId, input.adapterName, input.idempotencyKey]
+        );
+        const existingRow = existing.rows[0];
+        if (existingRow) {
+          const batch = await findPostingBatch(client, input.operatorId, existingRow.id);
+          await client.query('COMMIT');
+          return batch ? { ...batch, replayed: true } : { ...toPostingBatch(existingRow, []), replayed: true };
+        }
+      }
+
       const claimed = await client.query<ClaimedJournalEntryRow>(
         `
           SELECT id
@@ -311,13 +387,22 @@ export class PostgresPostingRepository implements PostingRepository {
             adapter_name,
             status,
             journal_entry_count,
+            idempotency_key,
+            created_by_api_key_id,
             created_at,
             updated_at
           )
-          VALUES ($1, $2, 'posting', $3, $4, $4)
+          VALUES ($1, $2, 'posting', $3, $4, $5, $6, $6)
           RETURNING *
         `,
-        [input.operatorId, input.adapterName, journalEntryIds.length, input.occurredAt]
+        [
+          input.operatorId,
+          input.adapterName,
+          journalEntryIds.length,
+          input.idempotencyKey || null,
+          input.createdByApiKeyId || null,
+          input.occurredAt
+        ]
       );
       const batchRow = batchResult.rows[0];
       if (!batchRow) {
@@ -500,6 +585,137 @@ export class PostgresPostingRepository implements PostingRepository {
       client.release();
     }
   }
+
+  async listPostingBatches(input: ListPostingBatchesInput & {
+    limit: number;
+    offset: number;
+  }): Promise<ListPage<PostingBatch>> {
+    const result = await this.pool.query<PostingBatchRow>(
+      `
+        SELECT *
+        FROM posting_batches
+        WHERE operator_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+        OFFSET $3
+      `,
+      [input.operatorId, input.limit, input.offset]
+    );
+    const countResult = await this.pool.query<CountRow>(
+      `
+        SELECT COUNT(*)::text AS total
+        FROM posting_batches
+        WHERE operator_id = $1
+      `,
+      [input.operatorId]
+    );
+
+    return {
+      records: await Promise.all(
+        result.rows.map(async (row) => {
+          const batch = await findPostingBatch(this.pool, input.operatorId, row.id);
+          return batch ?? toPostingBatch(row, []);
+        })
+      ),
+      page: {
+        limit: input.limit,
+        offset: input.offset,
+        total: Number(countResult.rows[0]?.total ?? 0)
+      }
+    };
+  }
+
+  findPostingBatch(input: {
+    operatorId: string;
+    batchId: string;
+  }): Promise<PostingBatch | null> {
+    return findPostingBatch(this.pool, input.operatorId, input.batchId);
+  }
+
+  async savePostingArtifact(input: SavePostingArtifactInput & {
+    createdAt: string;
+  }): Promise<PostingArtifact> {
+    const result = await this.pool.query<PostingArtifactRow>(
+      `
+        INSERT INTO posting_artifacts (
+          operator_id,
+          posting_batch_id,
+          content_type,
+          filename,
+          content,
+          checksum_sha256,
+          size_bytes,
+          row_count,
+          created_by_api_key_id,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (operator_id, posting_batch_id)
+        DO UPDATE SET filename = posting_artifacts.filename
+        RETURNING *
+      `,
+      [
+        input.operatorId,
+        input.postingBatchId,
+        input.contentType,
+        input.filename,
+        Buffer.from(input.content, 'utf8'),
+        input.checksumSha256,
+        input.sizeBytes,
+        input.rowCount,
+        input.createdByApiKeyId || null,
+        input.createdAt
+      ]
+    );
+
+    const row = result.rows[0];
+    if (!row) throw new Error('Posting artifact insert did not return a row');
+    return toPostingArtifact(row);
+  }
+
+  async findPostingArtifactByBatchId(input: {
+    operatorId: string;
+    batchId: string;
+  }): Promise<PostingArtifact | null> {
+    const result = await this.pool.query<PostingArtifactRow>(
+      `
+        SELECT *
+        FROM posting_artifacts
+        WHERE operator_id = $1 AND posting_batch_id = $2
+        LIMIT 1
+      `,
+      [input.operatorId, input.batchId]
+    );
+    return result.rows[0] ? toPostingArtifact(result.rows[0]) : null;
+  }
+
+  async recordPostingArtifactDownload(input: RecordPostingArtifactDownloadInput & {
+    downloadedAt: string;
+  }): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO posting_artifact_downloads (
+          operator_id,
+          posting_artifact_id,
+          posting_batch_id,
+          api_key_id,
+          user_agent,
+          remote_addr,
+          downloaded_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [
+        input.operatorId,
+        input.postingArtifactId,
+        input.postingBatchId,
+        input.apiKeyId || null,
+        input.userAgent || null,
+        input.remoteAddr || null,
+        input.downloadedAt
+      ]
+    );
+  }
 }
 
 const journalLogSelectColumns = `
@@ -618,7 +834,7 @@ async function findJournalEntry(
 }
 
 async function findPostingBatch(
-  queryable: pg.PoolClient,
+  queryable: pg.PoolClient | pg.Pool,
   operatorId: string,
   batchId: string
 ): Promise<PostingBatch | null> {
@@ -665,9 +881,27 @@ function toPostingBatch(row: PostingBatchRow, entries: JournalLogEntry[]): Posti
     adapterName: row.adapter_name,
     status: row.status,
     journalEntryCount: row.journal_entry_count,
+    idempotencyKey: row.idempotency_key ?? undefined,
+    createdByApiKeyId: row.created_by_api_key_id ?? undefined,
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at),
     entries
+  };
+}
+
+function toPostingArtifact(row: PostingArtifactRow): PostingArtifact {
+  return {
+    id: row.id,
+    operatorId: row.operator_id,
+    postingBatchId: row.posting_batch_id,
+    contentType: row.content_type,
+    filename: row.filename,
+    content: row.content.toString('utf8'),
+    checksumSha256: row.checksum_sha256,
+    sizeBytes: row.size_bytes,
+    rowCount: row.row_count,
+    createdByApiKeyId: row.created_by_api_key_id ?? undefined,
+    createdAt: toIsoString(row.created_at)
   };
 }
 

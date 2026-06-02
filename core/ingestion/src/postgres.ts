@@ -4,6 +4,7 @@ import type { CanonicalTransaction } from '@ledgerise/canonical-types';
 import type { CanonicalValidationError } from '@ledgerise/core-schema';
 
 import {
+  type AdapterConfigurationLookup,
   DuplicateSourceTransactionError,
   type DedupeConfidence,
   type IngestionErrorListInput,
@@ -12,7 +13,9 @@ import {
   type ListPage,
   type NewStoredCanonicalTransaction,
   type NewStoredIngestionError,
+  type SaveAdapterConfigurationInput,
   type SourceIdentityLookup,
+  type StoredAdapterConfiguration,
   type StoredCanonicalTransaction,
   type StoredIngestionError,
   type TransactionListInput,
@@ -54,6 +57,14 @@ interface OperatorRow {
 
 interface CountRow {
   total: string;
+}
+
+interface AdapterConfigurationRow {
+  operator_id: string;
+  name: string;
+  enabled: boolean;
+  metadata: Record<string, unknown>;
+  updated_at: Date | string;
 }
 
 export class PostgresIngestionRepository implements IngestionRepository {
@@ -341,6 +352,57 @@ export class PostgresIngestionRepository implements IngestionRepository {
 
     return toStoredIngestionError(row);
   }
+
+  async listAdapterConfigurations(operatorId: string): Promise<StoredAdapterConfiguration[]> {
+    const result = await this.pool.query<AdapterConfigurationRow>(
+      `
+        SELECT operator_id, name, enabled, metadata, updated_at
+        FROM adapters
+        WHERE operator_id = $1
+        ORDER BY name ASC
+      `,
+      [operatorId]
+    );
+
+    return result.rows.map(toStoredAdapterConfiguration);
+  }
+
+  async findAdapterConfiguration(
+    input: AdapterConfigurationLookup
+  ): Promise<StoredAdapterConfiguration | null> {
+    const result = await this.pool.query<AdapterConfigurationRow>(
+      `
+        SELECT operator_id, name, enabled, metadata, updated_at
+        FROM adapters
+        WHERE operator_id = $1
+          AND name = $2
+        LIMIT 1
+      `,
+      [input.operatorId, input.adapterName]
+    );
+
+    return result.rows[0] ? toStoredAdapterConfiguration(result.rows[0]) : null;
+  }
+
+  async saveAdapterConfiguration(
+    input: SaveAdapterConfigurationInput
+  ): Promise<StoredAdapterConfiguration | null> {
+    const result = await this.pool.query<AdapterConfigurationRow>(
+      `
+        UPDATE adapters
+        SET
+          enabled = COALESCE($3, enabled),
+          metadata = jsonb_set(metadata, '{config}', $4::jsonb, true),
+          updated_at = now()
+        WHERE operator_id = $1
+          AND name = $2
+        RETURNING operator_id, name, enabled, metadata, updated_at
+      `,
+      [input.operatorId, input.adapterName, input.enabled ?? null, JSON.stringify(input.config ?? {})]
+    );
+
+    return result.rows[0] ? toStoredAdapterConfiguration(result.rows[0]) : null;
+  }
 }
 
 async function findExistingBySourceIdentity(
@@ -408,8 +470,24 @@ function toStoredIngestionError(row: IngestionErrorRow): StoredIngestionError {
   };
 }
 
+function toStoredAdapterConfiguration(row: AdapterConfigurationRow): StoredAdapterConfiguration {
+  const metadata = isRecord(row.metadata) ? row.metadata : {};
+  return {
+    operatorId: row.operator_id,
+    name: row.name,
+    enabled: row.enabled,
+    config: metadata.config ?? {},
+    metadata,
+    updatedAt: toIsoString(row.updated_at)
+  };
+}
+
 function toIsoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return input !== null && typeof input === 'object' && !Array.isArray(input);
 }
 
 function normalizePagination(input: { limit?: number; offset?: number }) {

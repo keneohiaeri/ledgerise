@@ -1,14 +1,28 @@
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
+import {
+  normalize as normalizeGenericCsv,
+  type GenericCsvConfig
+} from '@ledgerise/adapter-inbound-generic-csv';
+import {
+  normalize as normalizeGenericWebhook,
+  type GenericWebhookConfig
+} from '@ledgerise/adapter-inbound-generic-webhook';
 import {
   postJournals as postGenericJournalCsv,
   validate as validateGenericJournalCsv
 } from '@ledgerise/adapter-outbound-generic-journal-csv';
 import {
+  postJournals as postZohoBooksJournals,
+  validate as validateZohoBooksJournals
+} from '@ledgerise/adapter-outbound-zoho-books';
+import {
   IngestionService,
   InMemoryIngestionRepository,
   type IngestionErrorListInput,
   type IngestionRepository,
+  type StoredAdapterConfiguration,
   type StoredCanonicalTransaction,
   type StoredIngestionError,
   type TransactionListInput
@@ -27,8 +41,11 @@ import {
   InMemoryPostingRepository,
   PostingService,
   PostingStateError,
+  type ApiKeyPrincipal,
+  type ApiScope,
   type JournalLogEntry,
   type PostingBatch,
+  type PostingArtifact,
   type PostingRepository
 } from '@ledgerise/core-posting';
 import { PostgresPostingRepository } from '@ledgerise/core-posting/postgres';
@@ -42,6 +59,91 @@ const { ingestionRepository, mappingRepository, postingRepository, defaultOperat
 const ingestionService = new IngestionService(ingestionRepository);
 const mappingService = new MappingService(mappingRepository);
 const postingService = new PostingService(postingRepository);
+
+const defaultGenericCsvConfig: GenericCsvConfig = {
+  source_system: 'csv-backfill',
+  environment: 'live',
+  column_mappings: {
+    source_id: 'reference',
+    occurred_at: 'occurred_at',
+    settled_at: 'settled_at',
+    status: 'status',
+    type: 'type',
+    direction: 'direction',
+    amount: 'amount',
+    currency: 'currency',
+    channel: 'channel',
+    'principal.id': 'principal_id',
+    'principal.type': 'principal_type',
+    'principal.reference': 'principal_reference',
+    'product.line': 'product_line',
+    'product.biller': 'biller',
+    'product.biller_category': 'biller_category'
+  },
+  metadata_columns: {
+    token: 'token'
+  }
+};
+
+const defaultGenericWebhookConfig: GenericWebhookConfig = {
+  source_system: 'generic-api',
+  environment: 'live',
+  field_mappings: {
+    source_id: 'txn_ref',
+    occurred_at: 'paid_at',
+    status: 'state',
+    amount: 'value',
+    type: 'service',
+    direction: 'direction',
+    currency: 'currency',
+    channel: 'channel',
+    'product.line': 'product_line',
+    'product.biller': 'biller',
+    'product.biller_category': 'biller_category',
+    'principal.id': 'customer_id',
+    'principal.reference': 'customer_phone',
+    'principal.type': 'principal_type'
+  },
+  defaults: {
+    direction: 'debit',
+    currency: 'NGN',
+    channel: 'api',
+    'product.line': 'consumer-app',
+    'principal.type': 'customer'
+  },
+  metadata_paths: {
+    raw_service: 'service'
+  },
+  amount_multiplier: 100
+};
+
+const defaultAdapterConfigs: Record<string, unknown> = {
+  'generic-csv': defaultGenericCsvConfig,
+  'generic-webhook': defaultGenericWebhookConfig,
+  'generic-poll': {
+    source_system: 'generic-api',
+    environment: 'live',
+    endpoint_url: 'https://api.example.com/transactions',
+    auth_header: 'Authorization',
+    records_path: 'data.transactions',
+    poll_interval: 'Every 15 minutes',
+    cursor_field: 'updated_at'
+  },
+  'generic-journal-csv': {
+    file_name_pattern: 'ledgerise-journals-{batch_id}.csv',
+    amount_unit: 'major',
+    include_source_transaction_id: true,
+    include_mapping_rule_id: true,
+    idempotency_header: 'Idempotency-Key'
+  },
+  'zoho-books': {
+    organization_id_env: 'ZOHO_ORGANIZATION_ID',
+    client_id_env: 'ZOHO_CLIENT_ID',
+    journal_status: 'draft',
+    batch_size: 100,
+    account_map_env: 'ZOHO_ACCOUNT_MAP_JSON'
+  }
+};
 
 const server = createServer(async (request, response) => {
   applyCors(response);
@@ -98,10 +200,27 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const operatorId = getHeader(request.headers['x-operator-id']) ?? defaultOperatorId;
+    const normalizedRecords = await normalizeInboundPayload(adapterName, body.value, request, operatorId);
+
+    if (normalizedRecords.status === 'error') {
+      sendJson(response, 422, normalizedRecords.body);
+      return;
+    }
+
+    if (normalizedRecords.records.length !== 1) {
+      sendJson(response, 400, {
+        status: 'error',
+        code: 'UNSUPPORTED_BATCH_INGEST',
+        message: 'This ingest route expects a single canonical transaction record'
+      });
+      return;
+    }
+
     const result = await ingestionService.ingestCanonicalTransaction({
-      operatorId: getHeader(request.headers['x-operator-id']) ?? defaultOperatorId,
+      operatorId,
       adapterName,
-      record: body.value
+      record: normalizedRecords.records[0]
     });
 
     if (result.status === 'accepted') {
@@ -133,7 +252,126 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/api/adapters') {
     sendJson(response, 200, {
-      records: listAdapters()
+      records: await listConfiguredAdapters(getOperatorId(request))
+    });
+    return;
+  }
+
+  const adapterConfigMatch = /^\/api\/adapters\/([^/]+)\/config$/.exec(url.pathname);
+
+  if (adapterConfigMatch && request.method === 'GET') {
+    const adapterName = decodeURIComponent(adapterConfigMatch[1] ?? '');
+    const adapter = findAdapter(adapterName);
+    if (!adapter) {
+      sendJson(response, 404, { status: 'error', code: 'ADAPTER_NOT_FOUND', message: 'Adapter not found' });
+      return;
+    }
+
+    const configuration = await getAdapterConfiguration(getOperatorId(request), adapterName);
+    sendJson(response, 200, {
+      record: {
+        ...adapter,
+        enabled: configuration?.enabled ?? true,
+        config: configuration?.config ?? defaultAdapterConfigs[adapterName] ?? {}
+      }
+    });
+    return;
+  }
+
+  if (adapterConfigMatch && request.method === 'PATCH') {
+    const adapterName = decodeURIComponent(adapterConfigMatch[1] ?? '');
+    const adapter = findAdapter(adapterName);
+    if (!adapter) {
+      sendJson(response, 404, { status: 'error', code: 'ADAPTER_NOT_FOUND', message: 'Adapter not found' });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    if (!body.ok) {
+      sendJson(response, 400, { status: 'error', code: 'MALFORMED_JSON', message: body.message });
+      return;
+    }
+
+    const payload = isRecord(body.value) ? body.value : {};
+    const config = payload.config ?? {};
+    const saved = await ingestionRepository.saveAdapterConfiguration({
+      operatorId: getOperatorId(request),
+      adapterName,
+      enabled: typeof payload.enabled === 'boolean' ? payload.enabled : undefined,
+      config
+    });
+
+    if (!saved) {
+      sendJson(response, 404, {
+        status: 'error',
+        code: 'ADAPTER_CONFIG_NOT_FOUND',
+        message: 'Adapter configuration row was not found for this operator'
+      });
+      return;
+    }
+
+    sendJson(response, 200, {
+      record: {
+        ...adapter,
+        enabled: saved.enabled,
+        config: saved.config
+      }
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/import/generic-csv') {
+    const body = await readJsonBody(request);
+    if (!body.ok) {
+      sendJson(response, 400, { status: 'error', code: 'MALFORMED_JSON', message: body.message });
+      return;
+    }
+
+    const payload = isRecord(body.value) ? body.value : {};
+    const content = readString(payload, 'content');
+    if (!content) {
+      sendJson(response, 400, {
+        status: 'error',
+        code: 'INVALID_BODY',
+        message: 'Body must include CSV content'
+      });
+      return;
+    }
+
+    const savedConfig = await getAdapterConfiguration(getOperatorId(request), 'generic-csv');
+    const normalized = await normalizeGenericCsv({
+      content,
+      filename: readString(payload, 'filename'),
+      config: readGenericCsvConfig(payload) ?? readGenericCsvConfigFromStored(savedConfig) ?? defaultGenericCsvConfig
+    });
+
+    if (normalized.status === 'error') {
+      sendJson(response, 422, normalized);
+      return;
+    }
+
+    const results = await Promise.all(
+      normalized.records.map((record) =>
+        ingestionService.ingestCanonicalTransaction({
+          operatorId: getOperatorId(request),
+          adapterName: 'generic-csv',
+          record
+        })
+      )
+    );
+    const accepted = results.filter((result) => result.status === 'accepted');
+    const duplicates = results.filter((result) => result.status === 'duplicate');
+    const rejected = results.filter((result) => result.status === 'rejected');
+
+    sendJson(response, 202, {
+      status: 'accepted',
+      imported: accepted.length,
+      duplicates: duplicates.length,
+      rejected: rejected.length,
+      row_errors: normalized.row_errors ?? [],
+      transaction_ids: accepted.map((result) =>
+        result.status === 'accepted' ? result.transaction.id : ''
+      ).filter(Boolean)
     });
     return;
   }
@@ -214,6 +452,9 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === 'POST' && url.pathname === '/api/posting-batches/generic-journal-csv') {
+    const auth = await authenticatePostingRequest(request, response, 'posting_batches:create');
+    if (!auth) return;
+
     const body = await readJsonBody(request);
     if (!body.ok) {
       sendJson(response, 400, { status: 'error', code: 'MALFORMED_JSON', message: body.message });
@@ -226,17 +467,46 @@ const server = createServer(async (request, response) => {
 
     try {
       const batch = await postingService.createPostingBatch({
-        operatorId: getOperatorId(request),
+        operatorId: auth.operatorId,
         adapterName: 'generic-journal-csv',
         journalEntryIds: readStringArray(payload, 'journal_entry_ids') ?? readStringArray(payload, 'journalEntryIds'),
+        idempotencyKey:
+          getHeader(request.headers['idempotency-key']) ??
+          readString(payload, 'idempotency_key') ??
+          readString(payload, 'idempotencyKey'),
+        createdByApiKeyId: auth.id,
         limit
       });
+
+      if (batch.replayed) {
+        const existingArtifact = await postingService.findPostingArtifactByBatchId({
+          operatorId: auth.operatorId,
+          batchId: batch.id
+        });
+        if (!existingArtifact && batch.status === 'posting') {
+          sendJson(response, 409, {
+            status: 'error',
+            code: 'POSTING_BATCH_IN_PROGRESS',
+            message: 'A posting batch with this idempotency key is still in progress',
+            batch: toPostingBatchResponse(batch)
+          });
+          return;
+        }
+        sendJson(response, 200, {
+          status: batch.status,
+          replayed: true,
+          batch: toPostingBatchResponse(batch, existingArtifact ?? undefined),
+          artifact: existingArtifact ? toPostingArtifactResponse(existingArtifact, true) : undefined
+        });
+        return;
+      }
+
       const outboundBatch = toOutboundJournalBatch(batch);
       const validation = validateGenericJournalCsv(outboundBatch);
 
       if (!validation.valid) {
         const completed = await postingService.completePostingBatch({
-          operatorId: getOperatorId(request),
+          operatorId: auth.operatorId,
           batchId: batch.id,
           adapterName: 'generic-journal-csv',
           results: batch.entries.map((entry) => ({
@@ -257,9 +527,124 @@ const server = createServer(async (request, response) => {
 
       const adapterResult = await postGenericJournalCsv(outboundBatch);
       const completed = await postingService.completePostingBatch({
-        operatorId: getOperatorId(request),
+        operatorId: auth.operatorId,
         batchId: batch.id,
         adapterName: 'generic-journal-csv',
+        results: [
+          ...adapterResult.posted.map((result) => ({
+            journalEntryId: result.journal_entry_id,
+            status: 'posted' as const,
+            externalReference: result.external_reference
+          })),
+          ...adapterResult.failed.map((result) => ({
+            journalEntryId: result.journal_entry_id,
+            status: 'failed' as const,
+            errorCode: result.code,
+            errorMessage: result.message
+          }))
+        ]
+      });
+      const artifact = adapterResult.artifact
+        ? await postingService.savePostingArtifact({
+            operatorId: auth.operatorId,
+            postingBatchId: batch.id,
+            contentType: adapterResult.artifact.content_type,
+            filename: adapterResult.artifact.filename,
+            content: adapterResult.artifact.content,
+            checksumSha256: sha256(adapterResult.artifact.content),
+            sizeBytes: Buffer.byteLength(adapterResult.artifact.content, 'utf8'),
+            rowCount: countCsvRows(adapterResult.artifact.content),
+            createdByApiKeyId: auth.id
+          })
+        : undefined;
+
+      sendJson(response, adapterResult.status === 'ok' ? 201 : 207, {
+        status: adapterResult.status,
+        replayed: false,
+        batch: completed ? toPostingBatchResponse(completed, artifact) : undefined,
+        posted: adapterResult.posted,
+        failed: adapterResult.failed,
+        artifact: artifact ? toPostingArtifactResponse(artifact, true) : undefined
+      });
+    } catch (error) {
+      if (error instanceof PostingStateError) {
+        sendJson(response, error.code === 'NO_POSTABLE_JOURNALS' ? 409 : 400, {
+          status: 'error',
+          code: error.code,
+          message: error.message
+        });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/posting-batches/zoho-books') {
+    const auth = await authenticatePostingRequest(request, response, 'posting_batches:create');
+    if (!auth) return;
+
+    const body = await readJsonBody(request);
+    if (!body.ok) {
+      sendJson(response, 400, { status: 'error', code: 'MALFORMED_JSON', message: body.message });
+      return;
+    }
+
+    const payload = isRecord(body.value) ? body.value : {};
+    const rawLimit = readNumber(payload, 'limit');
+    const limit = rawLimit === undefined ? 100 : rawLimit;
+
+    try {
+      const batch = await postingService.createPostingBatch({
+        operatorId: auth.operatorId,
+        adapterName: 'zoho-books',
+        journalEntryIds: readStringArray(payload, 'journal_entry_ids') ?? readStringArray(payload, 'journalEntryIds'),
+        idempotencyKey:
+          getHeader(request.headers['idempotency-key']) ??
+          readString(payload, 'idempotency_key') ??
+          readString(payload, 'idempotencyKey'),
+        createdByApiKeyId: auth.id,
+        limit
+      });
+
+      if (batch.replayed) {
+        sendJson(response, 200, {
+          status: batch.status,
+          replayed: true,
+          batch: toPostingBatchResponse(batch)
+        });
+        return;
+      }
+
+      const outboundBatch = toOutboundJournalBatch(batch);
+      const validation = validateZohoBooksJournals(outboundBatch);
+
+      if (!validation.valid) {
+        const completed = await postingService.completePostingBatch({
+          operatorId: auth.operatorId,
+          batchId: batch.id,
+          adapterName: 'zoho-books',
+          results: batch.entries.map((entry) => ({
+            journalEntryId: entry.id,
+            status: 'failed',
+            errorCode: 'VALIDATION_FAILED',
+            errorMessage: validation.errors.map((error) => `${error.field}: ${error.message}`).join('; ')
+          }))
+        });
+        sendJson(response, 422, {
+          status: 'error',
+          code: 'VALIDATION_FAILED',
+          batch: completed ? toPostingBatchResponse(completed) : undefined,
+          errors: validation.errors
+        });
+        return;
+      }
+
+      const adapterResult = await postZohoBooksJournals(outboundBatch);
+      const completed = await postingService.completePostingBatch({
+        operatorId: auth.operatorId,
+        batchId: batch.id,
+        adapterName: 'zoho-books',
         results: [
           ...adapterResult.posted.map((result) => ({
             journalEntryId: result.journal_entry_id,
@@ -277,10 +662,10 @@ const server = createServer(async (request, response) => {
 
       sendJson(response, adapterResult.status === 'ok' ? 201 : 207, {
         status: adapterResult.status,
+        replayed: false,
         batch: completed ? toPostingBatchResponse(completed) : undefined,
         posted: adapterResult.posted,
-        failed: adapterResult.failed,
-        artifact: adapterResult.artifact
+        failed: adapterResult.failed
       });
     } catch (error) {
       if (error instanceof PostingStateError) {
@@ -293,6 +678,107 @@ const server = createServer(async (request, response) => {
       }
       throw error;
     }
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/posting-batches') {
+    const auth = await authenticatePostingRequest(request, response, 'posting_batches:read');
+    if (!auth) return;
+
+    const pagination = parsePagination(url);
+    if (!pagination.ok) {
+      sendJson(response, 400, pagination.error);
+      return;
+    }
+
+    const batches = await postingService.listPostingBatches({
+      operatorId: auth.operatorId,
+      ...pagination.value
+    });
+    const records = await Promise.all(
+      batches.records.map(async (batch) => {
+        const artifact = await postingService.findPostingArtifactByBatchId({
+          operatorId: auth.operatorId,
+          batchId: batch.id
+        });
+        return toPostingBatchResponse(batch, artifact ?? undefined);
+      })
+    );
+
+    sendJson(response, 200, {
+      records,
+      page: batches.page
+    });
+    return;
+  }
+
+  const postingBatchArtifactMatch = /^\/api\/posting-batches\/([^/]+)\/artifact\.csv$/.exec(
+    url.pathname
+  );
+
+  if (request.method === 'GET' && postingBatchArtifactMatch) {
+    const auth = await authenticatePostingRequest(request, response, 'posting_artifacts:download');
+    if (!auth) return;
+
+    const batchId = decodeURIComponent(postingBatchArtifactMatch[1] ?? '');
+    const artifact = await postingService.findPostingArtifactByBatchId({
+      operatorId: auth.operatorId,
+      batchId
+    });
+    if (!artifact) {
+      sendJson(response, 404, {
+        status: 'error',
+        code: 'POSTING_ARTIFACT_NOT_FOUND',
+        message: `Posting artifact for batch "${batchId}" was not found`
+      });
+      return;
+    }
+
+    await postingService.recordPostingArtifactDownload({
+      operatorId: auth.operatorId,
+      postingArtifactId: artifact.id,
+      postingBatchId: artifact.postingBatchId,
+      apiKeyId: auth.id,
+      userAgent: getHeader(request.headers['user-agent']),
+      remoteAddr: request.socket.remoteAddress
+    });
+
+    sendText(response, 200, artifact.content, {
+      'content-type': artifact.contentType,
+      'content-disposition': `attachment; filename="${artifact.filename}"`,
+      'x-ledgerise-posting-batch-id': artifact.postingBatchId,
+      'x-ledgerise-artifact-checksum-sha256': artifact.checksumSha256
+    });
+    return;
+  }
+
+  const postingBatchMatch = /^\/api\/posting-batches\/([^/]+)$/.exec(url.pathname);
+
+  if (request.method === 'GET' && postingBatchMatch) {
+    const auth = await authenticatePostingRequest(request, response, 'posting_batches:read');
+    if (!auth) return;
+
+    const batchId = decodeURIComponent(postingBatchMatch[1] ?? '');
+    const batch = await postingService.findPostingBatch({
+      operatorId: auth.operatorId,
+      batchId
+    });
+    if (!batch) {
+      sendJson(response, 404, {
+        status: 'error',
+        code: 'POSTING_BATCH_NOT_FOUND',
+        message: `Posting batch "${batchId}" was not found`
+      });
+      return;
+    }
+    const artifact = await postingService.findPostingArtifactByBatchId({
+      operatorId: auth.operatorId,
+      batchId
+    });
+
+    sendJson(response, 200, {
+      record: toPostingBatchResponse(batch, artifact ?? undefined)
+    });
     return;
   }
 
@@ -535,10 +1021,71 @@ function sendJson(
   response.end(JSON.stringify(body));
 }
 
+function sendText(
+  response: ServerResponse,
+  statusCode: number,
+  body: string,
+  headers: Record<string, string> = {}
+) {
+  response.writeHead(statusCode, {
+    'access-control-allow-origin': '*',
+    ...headers
+  });
+  response.end(body);
+}
+
+async function listConfiguredAdapters(operatorId: string) {
+  const configurations = await ingestionRepository.listAdapterConfigurations(operatorId);
+  const byName = new Map(configurations.map((configuration) => [configuration.name, configuration]));
+
+  return listAdapters().map((adapter) => {
+    const configuration = byName.get(adapter.name);
+    return {
+      ...adapter,
+      enabled: configuration?.enabled ?? true,
+      config: configuration?.config ?? defaultAdapterConfigs[adapter.name] ?? {}
+    };
+  });
+}
+
+async function getAdapterConfiguration(
+  operatorId: string,
+  adapterName: string
+): Promise<StoredAdapterConfiguration | null> {
+  return ingestionRepository.findAdapterConfiguration({ operatorId, adapterName });
+}
+
+async function normalizeInboundPayload(
+  adapterName: string,
+  payload: unknown,
+  request: IncomingMessage,
+  operatorId: string
+): Promise<{ status: 'ok'; records: unknown[] } | { status: 'error'; body: unknown }> {
+  if (adapterName !== 'generic-webhook') {
+    return { status: 'ok', records: [payload] };
+  }
+
+  const savedConfig = await getAdapterConfiguration(operatorId, adapterName);
+  const normalized = await normalizeGenericWebhook({
+    payload,
+    headers: request.headers,
+    config: readGenericWebhookConfigFromStored(savedConfig) ?? defaultGenericWebhookConfig
+  });
+
+  if (normalized.status === 'error') {
+    return { status: 'error', body: normalized };
+  }
+
+  return { status: 'ok', records: normalized.records };
+}
+
 function applyCors(response: ServerResponse) {
   response.setHeader('access-control-allow-origin', '*');
   response.setHeader('access-control-allow-methods', 'GET,POST,PATCH,OPTIONS');
-  response.setHeader('access-control-allow-headers', 'content-type,x-operator-id,x-user-id');
+  response.setHeader(
+    'access-control-allow-headers',
+    'authorization,content-type,idempotency-key,x-api-key,x-operator-id,x-user-id'
+  );
 }
 
 function getHeader(value: string | string[] | undefined): string | undefined {
@@ -547,6 +1094,45 @@ function getHeader(value: string | string[] | undefined): string | undefined {
 
 function getOperatorId(request: IncomingMessage): string {
   return getHeader(request.headers['x-operator-id']) ?? defaultOperatorId;
+}
+
+async function authenticatePostingRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requiredScope: ApiScope
+): Promise<ApiKeyPrincipal | null> {
+  const rawKey = readApiKey(request);
+  if (!rawKey) {
+    sendJson(response, 401, {
+      status: 'error',
+      code: 'API_KEY_REQUIRED',
+      message: 'Provide an API key using Authorization: Bearer <key> or x-api-key'
+    });
+    return null;
+  }
+
+  const principal = await postingService.authenticateApiKey({
+    keyHash: sha256(rawKey),
+    requiredScope
+  });
+  if (!principal) {
+    sendJson(response, 403, {
+      status: 'error',
+      code: 'API_KEY_FORBIDDEN',
+      message: `API key is invalid, expired, disabled, or missing scope "${requiredScope}"`
+    });
+    return null;
+  }
+
+  return principal;
+}
+
+function readApiKey(request: IncomingMessage): string | undefined {
+  const authorization = getHeader(request.headers.authorization);
+  if (authorization?.startsWith('Bearer ')) {
+    return authorization.slice('Bearer '.length).trim() || undefined;
+  }
+  return getHeader(request.headers['x-api-key']);
 }
 
 function toTransactionSummary(transaction: StoredCanonicalTransaction) {
@@ -656,15 +1242,31 @@ function toJournalEntryResponse(entry: JournalLogEntry) {
   };
 }
 
-function toPostingBatchResponse(batch: PostingBatch) {
+function toPostingBatchResponse(batch: PostingBatch, artifact?: PostingArtifact) {
   return {
     id: batch.id,
     adapter_name: batch.adapterName,
     status: batch.status,
     journal_entry_count: batch.journalEntryCount,
+    idempotency_key: batch.idempotencyKey,
     created_at: batch.createdAt,
     updated_at: batch.updatedAt,
-    entries: batch.entries.map(toJournalEntryResponse)
+    entries: batch.entries.map(toJournalEntryResponse),
+    artifact: artifact ? toPostingArtifactResponse(artifact, false) : undefined
+  };
+}
+
+function toPostingArtifactResponse(artifact: PostingArtifact, includeContent: boolean) {
+  return {
+    id: artifact.id,
+    posting_batch_id: artifact.postingBatchId,
+    content_type: artifact.contentType,
+    filename: artifact.filename,
+    checksum_sha256: artifact.checksumSha256,
+    size_bytes: artifact.sizeBytes,
+    row_count: artifact.rowCount,
+    created_at: artifact.createdAt,
+    ...(includeContent ? { content: artifact.content } : {})
   };
 }
 
@@ -994,9 +1596,38 @@ function readNullableString(input: Record<string, unknown>, key: string): string
   return readString(input, key);
 }
 
+function readGenericCsvConfig(input: Record<string, unknown>): GenericCsvConfig | undefined {
+  const config = input.config;
+  if (!isRecord(config)) return undefined;
+  return config as unknown as GenericCsvConfig;
+}
+
+function readGenericCsvConfigFromStored(
+  configuration: StoredAdapterConfiguration | null
+): GenericCsvConfig | undefined {
+  return isRecord(configuration?.config) ? (configuration.config as unknown as GenericCsvConfig) : undefined;
+}
+
+function readGenericWebhookConfigFromStored(
+  configuration: StoredAdapterConfiguration | null
+): GenericWebhookConfig | undefined {
+  return isRecord(configuration?.config)
+    ? (configuration.config as unknown as GenericWebhookConfig)
+    : undefined;
+}
+
 function readNumber(input: Record<string, unknown>, key: string): number | undefined {
   const value = input[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function countCsvRows(content: string): number {
+  const trimmed = content.trim();
+  return trimmed ? trimmed.split('\n').length : 0;
 }
 
 function readStringArray(input: Record<string, unknown>, key: string): string[] | undefined {
