@@ -486,6 +486,8 @@ input.fi:focus, select.fi:focus { border-color: var(--color-primary); box-shadow
 .btn-ghost { color: var(--color-text-2); border-color: transparent; }
 .btn-ghost:hover { background: var(--color-muted-bg); color: var(--color-text); }
 
+.btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
 .btn-danger { background: var(--color-error-bg); color: var(--color-error); border-color: var(--color-error-ring); }
 .btn-danger:hover { background: var(--color-error); color: #fff; }
 

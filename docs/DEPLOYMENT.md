@@ -84,6 +84,19 @@ psql "$DATABASE_URL" -f infra/seed/0002_default_coa.sql
 
 ---
 
+## Procfile
+
+A `Procfile` is included at the project root for platforms that support it (Railway, Render, Heroku, Dokku):
+
+```
+web: node apps/api/dist/index.js
+worker: node apps/worker/dist/index.js
+```
+
+The web frontend is a static build — deploy it separately as a static site or serve it via nginx. It is not a Node process.
+
+---
+
 ## Deployment Options
 
 ### Option A — VPS (Ubuntu/Debian)
@@ -308,11 +321,12 @@ Add a rewrite rule so React Router works:
 Similar to Render but with a project-based UI that groups services together.
 
 1. Create a new Railway project and add a **PostgreSQL** plugin.
-2. Add a service from GitHub, set **Root Directory** to leave blank, set:
+2. Railway detects the `Procfile` automatically. It will start the `web` process (API) and `worker` process separately. You can also set them manually:
    - **Build command**: `npm install && npm run build`
-   - **Start command**: `npm start`
+   - **Start command** (API service): `npm start`
+   - **Start command** (worker service): `npm run start:worker`
 3. Add the same environment variables as in the Render section. Railway injects `DATABASE_URL` automatically from the Postgres plugin.
-4. For the frontend, add a second service or use Railway's static hosting. Set `VITE_API_BASE_URL` to the API service's Railway domain before the build runs.
+4. For the frontend, add a third service using Railway's static hosting. Set `VITE_API_BASE_URL` to the API service's Railway domain before the build runs.
 5. Run migrations from your local machine the same way as in the Render section.
 
 ---

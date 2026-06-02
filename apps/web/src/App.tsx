@@ -1138,6 +1138,7 @@ export function App() {
             loading={loading}
             mapTransaction={mapTransaction}
             importGenericCsv={importGenericCsv}
+            csvImportEnabled={adapters.find((a) => a.name === 'generic-csv')?.enabled ?? true}
             selectedTransaction={selectedTransaction}
             selectTransaction={setSelectedTransaction}
             closeTransactionDrawer={closeTransactionDrawer}
@@ -1259,6 +1260,7 @@ function TransactionsView(props: {
   journalEntries: JournalEntry[];
   loading: boolean;
   mapTransaction: (transaction: TransactionRecord) => void;
+  csvImportEnabled: boolean;
   selectedTransaction: TransactionRecord | null;
   selectTransaction: (transaction: TransactionRecord) => void;
   closeTransactionDrawer: () => void;
@@ -1284,6 +1286,7 @@ function TransactionsView(props: {
     journalEntries,
     loading,
     mapTransaction,
+    csvImportEnabled,
     selectedTransaction,
     selectTransaction,
     closeTransactionDrawer,
@@ -1339,7 +1342,7 @@ function TransactionsView(props: {
               if (file) void importGenericCsv(file);
             }}
           />
-          <button className="btn btn-primary" onClick={() => importInputRef.current?.click()}>
+          <button className="btn btn-primary" disabled={!csvImportEnabled} onClick={() => importInputRef.current?.click()}>
             Import Data
           </button>
         </div>

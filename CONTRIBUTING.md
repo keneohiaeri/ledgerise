@@ -134,7 +134,7 @@ All migration files are idempotent — safe to re-run.
 npm run dev
 ```
 
-This starts the API (port 3000), web dashboard (port 3001), and worker together. The API dev script loads `.env` automatically via `--env-file`.
+This starts the API (port 3000), web dashboard (port 3001), and worker in parallel. The API dev script loads `.env` automatically — no extra env setup needed.
 
 **Postgres vs memory mode.** If `DATABASE_URL` is absent the API falls back to an in-memory repository — all data is lost on restart and login will fail. The health endpoint reveals which mode is active:
 
@@ -146,13 +146,12 @@ GET /api/health
 
 ### After changing core packages
 
-`tsx watch` hot-reloads `apps/api/src/index.ts` but does **not** watch compiled workspace packages. After editing anything in `core/` or `adapters/`, rebuild before the API picks up the changes:
+`tsx watch` hot-reloads `apps/api/src/index.ts` but does **not** recompile workspace packages in `core/` or `adapters/`. After editing anything there, stop the dev server, rebuild, then restart:
 
 ```bash
 npm run build
+npm run dev
 ```
-
-Then restart the API.
 
 ### Run tests
 

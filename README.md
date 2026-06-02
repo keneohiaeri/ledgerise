@@ -87,41 +87,45 @@ Want to add an integration? See [docs/EXTERNAL_ADAPTER_GUIDE.md](docs/EXTERNAL_A
 
 Ledgerise is open source and can be run entirely on your own infrastructure.
 
+#### Development
+
 ```bash
-# Clone the repository
+# Clone and install
 git clone https://github.com/keneohiaeri/ledgerise.git
 cd ledgerise
-
-# Copy and configure environment variables
-cp .env.example .env
-
-# Install dependencies
 npm install
 
-# Run database migrations
-for f in infra/migrations/*.sql; do
-  psql "$DATABASE_URL" -f "$f"
-done
+# Configure environment
+cp .env.example .env
+# Edit .env — set DATABASE_URL and bootstrap admin credentials at minimum
 
-# Seed the default operator and COA
+# Run database migrations and seed
+for f in infra/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
 psql "$DATABASE_URL" -f infra/seed/0001_local_operator_and_adapters.sql
 psql "$DATABASE_URL" -f infra/seed/0002_default_coa.sql
 
-# Build
+# Build workspace packages, then start all three services
 npm run build
-
-# Start the API
-npm start
-
-# Serve the frontend (separate terminal)
-npm run start:web
+npm run dev
 ```
 
-On first start, Ledgerise creates a bootstrap admin account using the credentials in your `.env`. Log in and change the password before doing anything else.
+`npm run dev` starts the API (port 3000), web dashboard (port 3001), and worker in parallel. On first start, Ledgerise creates a bootstrap admin from the credentials in your `.env` — log in and change the password before anything else.
 
-The API runs on port 3000. The frontend runs on port 3001 by default. In production, both should sit behind a reverse proxy (nginx handles this — see deployment docs). For managed platforms like Render and Railway, the frontend is deployed as a static site and the API as a web service — each gets its own URL.
+After editing anything in `core/` or `adapters/`, run `npm run build` again before restarting.
 
-For full instructions including VPS setup, nginx config, TLS, systemd, Render, and Railway, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+#### Production
+
+Build the project, then run the API and worker as long-lived processes:
+
+```bash
+npm run build
+npm start          # API on port 3000
+npm run start:worker   # worker (separate terminal or process manager)
+```
+
+The web frontend (`apps/web/dist/`) is a static build — serve it with nginx or deploy it as a static site on Render/Railway. The API and frontend only need to share a URL: set `VITE_API_BASE_URL` to the public API URL at build time.
+
+For VPS setup (nginx, systemd, TLS), Render, and Railway, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). A `Procfile` is included for platforms that support it.
 
 ### Cloud-Hosted
 
