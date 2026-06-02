@@ -42,6 +42,13 @@ import {
 } from '@ledgerise/core-mapping';
 import { PostgresMappingRepository } from '@ledgerise/core-mapping/postgres';
 import {
+  InMemoryJournalEngineRepository,
+  JournalEngineService,
+  type JournalEntry as EngineJournalEntry,
+  type JournalEngineRepository
+} from '@ledgerise/core-engine';
+import { PostgresJournalEngineRepository } from '@ledgerise/core-engine/postgres';
+import {
   InMemoryPostingRepository,
   PostingService,
   PostingStateError,
@@ -486,12 +493,15 @@ class PostgresAccessStore implements AccessStore {
   }
 }
 
-const { ingestionRepository, mappingRepository, postingRepository, accessStore, defaultOperatorId, repositoryKind, pgPool } =
+const { ingestionRepository, mappingRepository, postingRepository, engineRepository, accessStore, defaultOperatorId, repositoryKind, pgPool } =
   await createRepositories();
 await bootstrapAdminUser();
 const ingestionService = new IngestionService(ingestionRepository);
 const mappingService = new MappingService(mappingRepository);
 const postingService = new PostingService(postingRepository);
+const engineService = new JournalEngineService(engineRepository, {
+  suspenseAccountCode: process.env.SUSPENSE_ACCOUNT_CODE ?? '199999'
+});
 
 const defaultGenericCsvConfig: GenericCsvConfig = {
   source_system: 'csv-backfill',
@@ -1860,6 +1870,31 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/engine/run') {
+    if (!requireRole(dashboardPrincipal!, response, ['admin', 'finance'])) return;
+    const body = await readJsonBody(request);
+    const payload = body.ok && isRecord(body.value) ? body.value : {};
+    const limit = readNumber(payload, 'limit');
+    const settings = getSystemSettings(getOperatorId(request));
+    const result = await engineService.runOnce({
+      operatorId: getOperatorId(request),
+      limit: (Number.isInteger(limit) && limit! > 0 ? limit : undefined) ?? settings.batchSize
+    });
+    log('info', 'engine_run', {
+      operatorId: getOperatorId(request),
+      scanned: result.scanned,
+      generated: result.generated,
+      skipped: result.skipped.length
+    });
+    sendJson(response, 200, {
+      scanned: result.scanned,
+      generated: result.generated,
+      skipped: result.skipped.length,
+      entries: result.entries.map(toEngineEntryResponse)
+    });
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/system-settings') {
     sendJson(response, 200, { record: getSystemSettings(getOperatorId(request)) });
     return;
@@ -1917,6 +1952,7 @@ async function createRepositories(): Promise<{
   ingestionRepository: IngestionRepository;
   mappingRepository: MappingRepository;
   postingRepository: PostingRepository;
+  engineRepository: JournalEngineRepository;
   accessStore: AccessStore;
   defaultOperatorId: string;
   repositoryKind: 'memory' | 'postgres';
@@ -1927,6 +1963,7 @@ async function createRepositories(): Promise<{
       ingestionRepository: new InMemoryIngestionRepository(),
       mappingRepository: new InMemoryMappingRepository(),
       postingRepository: new InMemoryPostingRepository(),
+      engineRepository: new InMemoryJournalEngineRepository(),
       accessStore: new InMemoryAccessStore(),
       defaultOperatorId: process.env.DEFAULT_OPERATOR_ID ?? 'local-operator',
       repositoryKind: 'memory',
@@ -1944,6 +1981,9 @@ async function createRepositories(): Promise<{
   const postingRepository = new PostgresPostingRepository({
     connectionString: process.env.DATABASE_URL
   });
+  const engineRepository = new PostgresJournalEngineRepository({
+    connectionString: process.env.DATABASE_URL
+  });
   const accessStore = new PostgresAccessStore({ connectionString: process.env.DATABASE_URL });
   const defaultOperatorId =
     process.env.DEFAULT_OPERATOR_ID ??
@@ -1959,6 +1999,7 @@ async function createRepositories(): Promise<{
     ingestionRepository,
     mappingRepository,
     postingRepository,
+    engineRepository,
     accessStore,
     defaultOperatorId,
     repositoryKind: 'postgres',
@@ -2338,6 +2379,25 @@ function toManagedApiKey(row: ApiKeyManagementRow): ManagedApiKey {
 
 function toIsoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function toEngineEntryResponse(entry: EngineJournalEntry) {
+  return {
+    id: entry.id,
+    transaction_id: entry.transactionId,
+    entry_type: entry.entryType,
+    status: entry.status,
+    currency: entry.currency,
+    amount: entry.amount,
+    mapping_rule_id: entry.mappingRuleId,
+    generated_at: entry.generatedAt,
+    lines: entry.lines.map((line) => ({
+      account_code: line.accountCode,
+      side: line.side,
+      amount: line.amount,
+      currency: line.currency
+    }))
+  };
 }
 
 function toPollRunResponse(run: StoredPollRun) {
