@@ -1,8 +1,8 @@
 import { type ChangeEvent, FormEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true';
-const DEMO_EMAIL_KEY = 'ledgerise_demo_email';
-const DEMO_PASSWORD_KEY = 'ledgerise_demo_password';
+const DEMO_EMAIL = import.meta.env.VITE_DEMO_EMAIL ?? '';
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD ?? '';
 
 type Screen = 'transactions' | 'mapping-rules' | 'journal-log' | 'settings';
 type SettingsTab = 'coa' | 'schema' | 'adapters' | 'users' | 'system';
@@ -2309,20 +2309,15 @@ function LoginView(props: {
   onLogin: (input: { email: string; password: string }) => Promise<void>;
 }) {
   const { error, onLogin } = props;
-  const [form, setForm] = useState(() => ({
-    email: DEMO_MODE ? (localStorage.getItem(DEMO_EMAIL_KEY) ?? '') : '',
-    password: DEMO_MODE ? (localStorage.getItem(DEMO_PASSWORD_KEY) ?? '') : '',
-  }));
+  const [form, setForm] = useState({
+    email: DEMO_MODE ? DEMO_EMAIL : '',
+    password: DEMO_MODE ? DEMO_PASSWORD : '',
+  });
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
 
   function updateForm(patch: Partial<typeof form>) {
-    const next = { ...form, ...patch };
-    setForm(next);
-    if (DEMO_MODE) {
-      if (patch.email !== undefined) localStorage.setItem(DEMO_EMAIL_KEY, next.email);
-      if (patch.password !== undefined) localStorage.setItem(DEMO_PASSWORD_KEY, next.password);
-    }
+    setForm((current) => ({ ...current, ...patch }));
   }
 
   async function submitLogin(event: FormEvent) {
@@ -2347,9 +2342,6 @@ function LoginView(props: {
           <span className="auth-wordmark">Ledgerise</span>
         </div>
         <h1 className="auth-heading">Sign in</h1>
-        {DEMO_MODE ? (
-          <p className="auth-demo-notice">Demo mode — credentials are saved in your browser.</p>
-        ) : null}
         <form className="auth-form" onSubmit={submitLogin}>
           <div className="form-field">
             <label>Email address</label>
