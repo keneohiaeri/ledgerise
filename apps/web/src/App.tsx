@@ -4118,15 +4118,37 @@ function detectSourceFields(sample: string, csvMode: boolean) {
   }
 }
 
+function parsePreviewCsv(content: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i]!;
+    const next = content[i + 1];
+    if (ch === '"' && inQuotes && next === '"') { field += '"'; i++; continue; }
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === ',' && !inQuotes) { row.push(field); field = ''; continue; }
+    if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && next === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = ''; continue;
+    }
+    field += ch;
+  }
+  row.push(field);
+  if (row.some((c) => c !== '')) rows.push(row);
+  return rows;
+}
+
 function runPreviewMapping(sample: string, rows: AdapterMappingRow[], csvMode: boolean): string {
   try {
     let sourceRow: Record<string, string> = {};
 
     if (csvMode) {
-      const lines = sample.trim().split(/\r?\n/);
-      if (lines.length < 2) return '(paste a sample with a header row and at least one data row)';
-      const headers = (lines[0] ?? '').split(',').map((h) => h.trim());
-      const values = (lines[1] ?? '').split(',').map((v) => v.trim());
+      const parsed = parsePreviewCsv(sample.trim());
+      if (parsed.length < 2) return '(paste a sample with a header row and at least one data row)';
+      const headers = parsed[0]!.map((h) => h.trim());
+      const values = parsed[1]!.map((v) => v.trim());
       sourceRow = Object.fromEntries(headers.map((h, i) => [h, values[i] ?? '']));
     } else {
       const parsed = JSON.parse(sample) as unknown;
@@ -4204,17 +4226,46 @@ function applyPreviewTransform(value: string, transform: string, enumMapStr: str
 function applyDetectedFields(rows: AdapterMappingRow[], sourceFields: string[]) {
   return rows.map((row) => {
     const suggested = sourceSuggestionForCanonical(row.canonicalField, sourceFields);
-    if (suggested && suggested !== row.sourcePath) {
+    if (suggested) {
       return { ...row, sourcePath: suggested, transform: defaultTransformForField(row.canonicalField) };
     }
-    return row;
+    // No match found — clear the source path so stale template values don't remain
+    return { ...row, sourcePath: '' };
   });
 }
 
+function tokenizeField(field: string): string[] {
+  return field.replace(/[._\-\s]+/g, ' ').toLowerCase().split(' ').filter((t) => t.length > 2);
+}
+
 function sourceSuggestionForCanonical(canonicalField: string, sourceFields: string[]) {
+  const preferred = sourceFieldSuggestions[canonicalField] ?? [];
   const normalized = new Map(sourceFields.map((field) => [normalizeFieldName(field), field]));
-  const preferred = sourceFieldSuggestions[canonicalField] ?? [canonicalField];
-  return preferred.map((field) => normalized.get(normalizeFieldName(field))).find(Boolean);
+
+  // 1. Curated exact matches first
+  const exact = preferred.map((field) => normalized.get(normalizeFieldName(field))).find(Boolean);
+  if (exact) return exact;
+
+  // 2. Token-overlap fuzzy matching
+  // Build a set of meaningful tokens from the canonical field name and its known synonyms
+  const synonymTokens = new Set([...preferred, canonicalField].flatMap(tokenizeField));
+
+  let bestMatch: string | undefined;
+  let bestScore = 0;
+
+  for (const sourceField of sourceFields) {
+    const sourceTokens = tokenizeField(sourceField);
+    if (sourceTokens.length === 0) continue;
+    const overlap = sourceTokens.filter((t) => synonymTokens.has(t)).length;
+    if (overlap === 0) continue;
+    const score = overlap / sourceTokens.length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = sourceField;
+    }
+  }
+
+  return bestMatch;
 }
 
 function flattenObjectKeys(input: unknown, prefix = ''): string[] {
@@ -4252,21 +4303,90 @@ const requiredCanonicalFields = new Set([
 ]);
 
 const sourceFieldSuggestions: Record<string, string[]> = {
-  source_id: ['reference', 'source_id', 'txn_ref', 'id'],
-  occurred_at: ['occurred_at', 'transaction_date', 'paid_at', 'created_at'],
-  settled_at: ['settled_at', 'settled_date'],
-  status: ['status', 'state'],
-  amount: ['amount', 'value'],
-  currency: ['currency'],
-  type: ['type', 'transaction_type', 'service'],
-  direction: ['direction'],
-  channel: ['channel'],
-  'product.line': ['product_line', 'product', 'service'],
-  'product.biller': ['biller'],
-  'product.biller_category': ['biller_category', 'category'],
-  'principal.reference': ['principal_reference', 'customer_phone', 'customer_reference'],
-  'principal.id': ['principal_id', 'customer_id', 'customer'],
-  'principal.type': ['principal_type']
+  source_id: [
+    'reference', 'source_id', 'txn_ref', 'transaction_ref', 'transaction_id',
+    'external_id', 'external_ref', 'payment_ref', 'payment_id', 'order_id',
+    'order_ref', 'request_id', 'correlation_id', 'trace_id', 'tracking_id',
+    'receipt_id', 'receipt_no', 'receipt_num', 'invoice_id', 'invoice_no',
+    'booking_id', 'confirmation_no', 'confirmation_id', 'session_id',
+    'trx_id', 'tran_id', 'trans_id', 'unique_ref', 'identifier'
+  ],
+  occurred_at: [
+    'occurred_at', 'transaction_date', 'paid_at', 'created_at', 'created_on',
+    'created_date', 'payment_date', 'payment_time', 'initiated_at',
+    'processed_at', 'executed_at', 'event_time', 'event_date',
+    'date_time', 'tran_date', 'txn_date', 'order_date', 'timestamp',
+    'trans_date', 'activity_date', 'value_date', 'post_date'
+  ],
+  settled_at: [
+    'settled_at', 'settled_date', 'settlement_date', 'settlement_time',
+    'completed_at', 'cleared_at', 'finalized_at', 'resolved_at',
+    'clearing_date', 'posting_date', 'fulfillment_date'
+  ],
+  status: [
+    'status', 'state', 'status_code', 'response_code', 'result', 'outcome',
+    'condition', 'transaction_status', 'payment_status', 'order_status',
+    'resolution', 'response', 'code', 'flag', 'success_flag',
+    'tran_status', 'txn_status', 'trans_status'
+  ],
+  amount: [
+    'amount', 'value', 'sum', 'total', 'price', 'cost', 'charge',
+    'payment_amount', 'transaction_amount', 'tran_amount', 'txn_amount',
+    'debit_amount', 'credit_amount', 'gross_amount', 'net_amount',
+    'gross', 'net', 'qty', 'quantity', 'amt', 'naira_value',
+    'face_value', 'principal_amount', 'settlement_amount'
+  ],
+  currency: [
+    'currency', 'currency_code', 'ccy', 'iso_currency', 'curr',
+    'denomination', 'coin', 'fx_currency', 'payment_currency'
+  ],
+  type: [
+    'type', 'transaction_type', 'payment_type', 'service', 'service_type',
+    'product_type', 'category', 'kind', 'class', 'mode', 'operation',
+    'method', 'txn_type', 'tran_type', 'trans_type', 'order_type',
+    'event_type', 'action_type', 'transfer_type'
+  ],
+  direction: [
+    'direction', 'flow', 'side', 'dr_cr', 'debit_credit', 'entry_type',
+    'movement', 'sign', 'polarity', 'credit_debit', 'txn_side'
+  ],
+  channel: [
+    'channel', 'source', 'platform', 'medium', 'interface', 'origin',
+    'access', 'device', 'network', 'gateway', 'entry_channel',
+    'payment_channel', 'transaction_channel', 'txn_channel', 'access_channel'
+  ],
+  'product.line': [
+    'product_line', 'product', 'line', 'service_line', 'segment',
+    'division', 'business_line', 'vertical', 'offering', 'portfolio',
+    'product_group', 'service_group', 'business_unit', 'product_category'
+  ],
+  'product.biller': [
+    'biller', 'merchant', 'vendor', 'provider', 'processor', 'payee',
+    'counterparty', 'beneficiary', 'operator', 'partner', 'service_provider',
+    'recipient', 'collector', 'issuer', 'sender', 'destination_bank',
+    'merchant_name', 'biller_name', 'vendor_name', 'payee_name'
+  ],
+  'product.biller_category': [
+    'biller_category', 'merchant_category', 'service_category', 'sector',
+    'industry', 'mcc', 'class', 'group', 'sub_category', 'sub_type',
+    'merchant_type', 'biller_type', 'service_class'
+  ],
+  'principal.id': [
+    'principal_id', 'customer_id', 'user_id', 'account_id', 'client_id',
+    'wallet_id', 'payer_id', 'msisdn', 'subscriber_id', 'member_id',
+    'consumer_id', 'agent_id', 'sender_id', 'buyer_id', 'holder_id',
+    'patron_id', 'owner_id', 'initiator_id', 'originator_id'
+  ],
+  'principal.reference': [
+    'principal_reference', 'customer_phone', 'phone_number', 'mobile',
+    'phone', 'msisdn', 'account_number', 'customer_reference',
+    'user_reference', 'contact', 'mobile_number', 'phone_no',
+    'customer_account', 'account_no', 'account_num', 'masked_phone'
+  ],
+  'principal.type': [
+    'principal_type', 'customer_type', 'user_type', 'account_type',
+    'client_type', 'payer_type', 'entity_type', 'actor_type', 'party_type'
+  ]
 };
 
 function AdapterGlyph({ adapterName, direction }: { adapterName: string; direction: AdapterRecord['direction'] }) {
