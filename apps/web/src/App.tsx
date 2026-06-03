@@ -3712,7 +3712,7 @@ function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
                 type="text"
                 name={`map:${mappingField.id}:${index}:defaultValue`}
                 value={row.defaultValue}
-                placeholder={row.transform === 'enum_map' ? 'src=canonical, ...' : row.sourcePath ? '' : 'fixed value'}
+                placeholder={row.transform === 'enum_map' ? 'src=canonical, ...' : row.sourcePath ? '' : 'type a value...'}
                 style={{ opacity: !row.sourcePath || row.transform === 'enum_map' ? 1 : 0.35 }}
                 onChange={(event) => updateMappingRow(setMappingRows, index, { defaultValue: event.target.value })}
               />
