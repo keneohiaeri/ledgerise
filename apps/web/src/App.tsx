@@ -840,16 +840,21 @@ export function App() {
     setNotice('');
 
     try {
-      const content = await file.text();
-      const result = await apiPost<{
-        imported: number;
-        duplicates: number;
-        rejected: number;
-        row_errors?: unknown[];
-      }>('/api/import/generic-csv', {
-        filename: file.name,
-        content
+      const formData = new FormData();
+      formData.append('file', file);
+      const token = localStorage.getItem(authTokenStorageKey);
+      const response = await fetch(`${apiBaseUrl}/api/import/generic-csv`, {
+        method: 'POST',
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+        body: formData
       });
+      const payload = await response.json() as Record<string, unknown>;
+      if (!response.ok) {
+        if (response.status === 401) localStorage.removeItem(authTokenStorageKey);
+        const message = typeof payload.message === 'string' ? payload.message : 'Failed to import CSV';
+        throw new Error(message);
+      }
+      const result = payload as { imported: number; duplicates: number; row_errors?: unknown[] };
       setNotice(
         `Imported ${result.imported} transactions` +
           (result.duplicates ? `, ${result.duplicates} duplicates` : '') +
@@ -3568,7 +3573,7 @@ function AdapterConfigDrawer(props: {
 }
 
 function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewOutput, setPreviewOutput] = useState<string | null>(null);
   const [detected, setDetected] = useState(false);
   const [mappingRows, setMappingRows] = useState(field.type === 'mapping' ? field.rows : []);
   const sampleRef = useRef<HTMLTextAreaElement | null>(null);
@@ -3579,7 +3584,7 @@ function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
     if (field.type === 'mapping') {
       setMappingRows(field.rows);
       setDetected(false);
-      setPreviewOpen(false);
+      setPreviewOutput(null);
     }
   }, [mappingId]);
 
@@ -3668,8 +3673,9 @@ function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
       <div className="field-map">
         <div className="field-map-head">
           <span>{mappingField.sourceLabel ?? 'Source field'}</span>
-          <span>Standard Ledgerise field</span>
-          <span>Required</span>
+          <span>Canonical field</span>
+          <span>Transform</span>
+          <span>Enum map / Default</span>
           <span />
         </div>
         <div className="field-map-body">
@@ -3679,23 +3685,37 @@ function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
                 type="text"
                 name={`map:${mappingField.id}:${index}:sourcePath`}
                 value={row.sourcePath}
+                placeholder="CSV column name"
                 onChange={(event) => updateMappingRow(setMappingRows, index, { sourcePath: event.target.value })}
               />
               <select
                 name={`map:${mappingField.id}:${index}:canonicalField`}
                 value={row.canonicalField}
-                onChange={(event) => updateMappingRow(setMappingRows, index, { canonicalField: event.target.value })}
+                onChange={(event) => {
+                  const canonicalField = event.target.value;
+                  updateMappingRow(setMappingRows, index, {
+                    canonicalField,
+                    transform: defaultTransformForField(canonicalField)
+                  });
+                }}
               >
                 {canonicalFieldOptions.map((option) => <option key={option}>{option}</option>)}
               </select>
-              <label className="field-map-required">
-                <input
-                  type="checkbox"
-                  name={`map:${mappingField.id}:${index}:required`}
-                  checked={row.required}
-                  onChange={(event) => updateMappingRow(setMappingRows, index, { required: event.target.checked })}
-                />
-              </label>
+              <select
+                name={`map:${mappingField.id}:${index}:transform`}
+                value={row.transform}
+                onChange={(event) => updateMappingRow(setMappingRows, index, { transform: event.target.value })}
+              >
+                {transformOptions.map((option) => <option key={option}>{option}</option>)}
+              </select>
+              <input
+                type="text"
+                name={`map:${mappingField.id}:${index}:defaultValue`}
+                value={row.defaultValue}
+                placeholder={row.transform === 'enum_map' ? 'src=canonical, ...' : ''}
+                style={{ opacity: row.transform === 'enum_map' ? 1 : 0.35 }}
+                onChange={(event) => updateMappingRow(setMappingRows, index, { defaultValue: event.target.value })}
+              />
               <div className="field-map-actions">
                 <button
                   className="btn btn-ghost btn-sm"
@@ -3723,13 +3743,23 @@ function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
         >
           Add field
         </button>
-        <button className="btn btn-ghost btn-sm" type="button" onClick={() => setPreviewOpen(true)}>Preview mapping</button>
+        <button
+          className="btn btn-ghost btn-sm"
+          type="button"
+          onClick={() => {
+            if (previewOutput !== null) { setPreviewOutput(null); return; }
+            const sample = sampleRef.current?.value ?? mappingField.preview.source;
+            setPreviewOutput(runPreviewMapping(sample, mappingRows, Boolean(mappingField.sourceLabel)));
+          }}
+        >
+          {previewOutput !== null ? 'Hide preview' : 'Preview mapping'}
+        </button>
       </div>
       <div className="field-map-note">Detected source fields are mapped onto Ledgerise canonical fields. Adapter defaults still handle normalization, validation, and required canonical structure.</div>
-      {previewOpen ? (
+      {previewOutput !== null ? (
         <div className="field-map-preview">
-          <div className="field-map-preview-title">Preview output</div>
-          <pre>{mappingField.preview.output}</pre>
+          <div className="field-map-preview-title">Preview output (first data row)</div>
+          <pre>{previewOutput}</pre>
         </div>
       ) : null}
     </>
@@ -3800,14 +3830,27 @@ function rowsFromMappingConfig(
   if (!mapping) return fallback;
   const fallbackByCanonical = new Map(fallback.map((row) => [row.canonicalField, row]));
   return Object.entries(mapping)
-    .filter(([, sourcePath]) => typeof sourcePath === 'string' && sourcePath.trim())
-    .map(([canonicalField, sourcePath]) => ({
-      sourcePath: String(sourcePath),
-      canonicalField,
-      transform: fallbackByCanonical.get(canonicalField)?.transform ?? defaultTransformForField(canonicalField),
-      defaultValue: fallbackByCanonical.get(canonicalField)?.defaultValue ?? '',
-      required: fallbackByCanonical.get(canonicalField)?.required ?? requiredCanonicalFields.has(canonicalField)
-    }));
+    .filter(([, spec]) => {
+      const col = spec !== null && typeof spec === 'object' && !Array.isArray(spec)
+        ? (spec as Record<string, unknown>).column
+        : spec;
+      return typeof col === 'string' && String(col).trim().length > 0;
+    })
+    .map(([canonicalField, spec]) => {
+      const isObj = spec !== null && typeof spec === 'object' && !Array.isArray(spec);
+      const obj = isObj ? (spec as Record<string, unknown>) : null;
+      const sourcePath = obj ? String(obj.column ?? '') : String(spec);
+      const transform = obj ? String(obj.transform ?? 'copy') : 'copy';
+      const enumMap = obj ? String(obj.enum_map ?? '') : '';
+      const fallbackRow = fallbackByCanonical.get(canonicalField);
+      return {
+        sourcePath,
+        canonicalField,
+        transform: transform || fallbackRow?.transform || defaultTransformForField(canonicalField),
+        defaultValue: enumMap || fallbackRow?.defaultValue || '',
+        required: fallbackRow?.required ?? requiredCanonicalFields.has(canonicalField)
+      };
+    });
 }
 
 function buildAdapterOperationalConfig(adapter: AdapterRecord, formData: FormData): unknown {
@@ -3982,9 +4025,20 @@ function readMappingRows(formData: FormData, mapId: string): AdapterMappingRow[]
     .filter((row) => row.sourcePath && row.canonicalField);
 }
 
-function mappingRowsToObject(rows: AdapterMappingRow[]) {
-  return rows.reduce<Record<string, string>>((current, row) => {
-    current[row.canonicalField] = row.sourcePath;
+type CsvColumnSpec = string | { column: string; transform: string; enum_map?: string };
+
+function mappingRowsToObject(rows: AdapterMappingRow[]): Record<string, CsvColumnSpec> {
+  return rows.reduce<Record<string, CsvColumnSpec>>((current, row) => {
+    if (row.transform && row.transform !== 'copy') {
+      const spec: { column: string; transform: string; enum_map?: string } = {
+        column: row.sourcePath,
+        transform: row.transform
+      };
+      if (row.transform === 'enum_map' && row.defaultValue) spec.enum_map = row.defaultValue;
+      current[row.canonicalField] = spec;
+    } else {
+      current[row.canonicalField] = row.sourcePath;
+    }
     return current;
   }, {});
 }
@@ -4018,6 +4072,87 @@ function detectSourceFields(sample: string, csvMode: boolean) {
     return flattenObjectKeys(parsed);
   } catch {
     return [];
+  }
+}
+
+function runPreviewMapping(sample: string, rows: AdapterMappingRow[], csvMode: boolean): string {
+  try {
+    let sourceRow: Record<string, string> = {};
+
+    if (csvMode) {
+      const lines = sample.trim().split(/\r?\n/);
+      if (lines.length < 2) return '(paste a sample with a header row and at least one data row)';
+      const headers = (lines[0] ?? '').split(',').map((h) => h.trim());
+      const values = (lines[1] ?? '').split(',').map((v) => v.trim());
+      sourceRow = Object.fromEntries(headers.map((h, i) => [h, values[i] ?? '']));
+    } else {
+      const parsed = JSON.parse(sample) as unknown;
+      const flat = (key: string, obj: unknown): [string, string][] => {
+        if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return [[key, String(obj ?? '')]];
+        return Object.entries(obj as Record<string, unknown>).flatMap(([k, v]) => flat(`${key}.${k}`, v));
+      };
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        sourceRow = Object.fromEntries(
+          Object.entries(parsed as Record<string, unknown>).flatMap(([k, v]) => flat(k, v))
+        );
+      }
+    }
+
+    const record: Record<string, unknown> = {};
+    for (const row of rows) {
+      if (!row.sourcePath || !row.canonicalField) continue;
+      const value = sourceRow[row.sourcePath];
+      if (value === undefined || value === '') continue;
+      const transformed = applyPreviewTransform(value, row.transform, row.defaultValue);
+      const parts = row.canonicalField.split('.');
+      let current = record;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i]!;
+        if (typeof current[part] !== 'object' || current[part] === null) current[part] = {};
+        current = current[part] as Record<string, unknown>;
+      }
+      current[parts[parts.length - 1]!] = transformed;
+    }
+
+    return JSON.stringify(record, null, 2);
+  } catch {
+    return '(preview error — check sample format)';
+  }
+}
+
+function applyPreviewTransform(value: string, transform: string, enumMapStr: string): unknown {
+  switch (transform) {
+    case 'parse_datetime': {
+      const t = value.trim();
+      const excel = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(t);
+      if (excel) {
+        const year = excel[3]!.length === 2 ? `20${excel[3]}` : excel[3]!;
+        return `${year}-${excel[1]!.padStart(2, '0')}-${excel[2]!.padStart(2, '0')}T${(excel[4] ?? '0').padStart(2, '0')}:${(excel[5] ?? '0').padStart(2, '0')}:00.000Z`;
+      }
+      return /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00:00.000Z` : t;
+    }
+    case 'amount_to_minor': {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.round(n * 100) : value;
+    }
+    case 'enum_map': {
+      const map: Record<string, string> = {};
+      for (const pair of enumMapStr.split(',')) {
+        const eq = pair.indexOf('=');
+        if (eq !== -1) map[pair.slice(0, eq).trim().toLowerCase()] = pair.slice(eq + 1).trim();
+      }
+      return map[value.trim().toLowerCase()] ?? map[value.trim()] ?? value;
+    }
+    case 'lowercase': return value.toLowerCase();
+    case 'uppercase': return value.toUpperCase();
+    case 'mask_phone': {
+      const d = value.replace(/\D/g, '');
+      return d.length < 7 ? value : d.slice(0, 3) + '*'.repeat(d.length - 6) + d.slice(-3);
+    }
+    default: {
+      const n = Number(value);
+      return value !== '' && Number.isFinite(n) ? n : value;
+    }
   }
 }
 
@@ -4480,9 +4615,11 @@ async function apiRequest<T>(path: string, init: RequestInit): Promise<T> {
       localStorage.removeItem(authTokenStorageKey);
     }
     const code = typeof payload.code === 'string' ? payload.code : undefined;
-    const message = Array.isArray(payload.errors)
-      ? payload.errors.join(', ')
-      : payload.message ?? 'API request failed';
+    const message = typeof payload.message === 'string'
+      ? payload.message
+      : Array.isArray(payload.errors)
+        ? payload.errors.map((e: unknown) => (typeof e === 'string' ? e : (e as { message?: string }).message ?? String(e))).join(', ')
+        : 'API request failed';
     const error = new Error(message) as Error & { code?: string };
     error.code = code;
     throw error;

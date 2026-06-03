@@ -22,10 +22,12 @@ export interface GenericCsvInput {
   config: GenericCsvConfig;
 }
 
+export type GenericCsvColumnSpec = string | { column: string; transform?: string; enum_map?: string };
+
 export interface GenericCsvConfig {
   source_system: string;
   environment?: 'live' | 'test';
-  column_mappings: Record<string, string>;
+  column_mappings: Record<string, GenericCsvColumnSpec>;
   defaults?: Record<string, unknown>;
   metadata_columns?: Record<string, string>;
   delimiter?: string;
@@ -187,11 +189,14 @@ function buildCanonicalRecord(
 ): CanonicalTransaction {
   const record: Record<string, unknown> = {};
 
-  for (const [canonicalPath, columnName] of Object.entries(config.column_mappings)) {
-    const value = row[columnName];
+  for (const [canonicalPath, spec] of Object.entries(config.column_mappings)) {
+    const columnName = typeof spec === 'string' ? spec : spec.column;
+    const transform = typeof spec === 'string' ? 'copy' : (spec.transform ?? 'copy');
+    const enumMapStr = typeof spec === 'string' ? undefined : spec.enum_map;
 
+    const value = row[columnName];
     if (value !== undefined && value !== '') {
-      setPath(record, canonicalPath, coerceCsvValue(value));
+      setPath(record, canonicalPath, applyTransform(value, transform, enumMapStr, config.amount_multiplier));
     }
   }
 
@@ -223,11 +228,93 @@ function buildCanonicalRecord(
   };
   record.metadata = metadata;
 
-  if (typeof record.amount === 'number' && config.amount_multiplier) {
+  // Backward-compat: apply global amount_multiplier only when no per-column transform handled it
+  const amountSpec = config.column_mappings['amount'];
+  const amountHasTransform =
+    amountSpec !== undefined && typeof amountSpec !== 'string' && amountSpec.transform === 'amount_to_minor';
+  if (!amountHasTransform && typeof record.amount === 'number' && config.amount_multiplier) {
     record.amount = Math.round(record.amount * config.amount_multiplier);
   }
 
   return record as unknown as CanonicalTransaction;
+}
+
+function applyTransform(
+  value: string,
+  transform: string,
+  enumMapStr: string | undefined,
+  amountMultiplier: number | undefined
+): unknown {
+  switch (transform) {
+    case 'parse_datetime':
+      return parseDateTime(value) ?? value;
+    case 'amount_to_minor': {
+      const num = Number(value);
+      return Number.isFinite(num) ? Math.round(num * (amountMultiplier ?? 100)) : coerceCsvValue(value);
+    }
+    case 'enum_map': {
+      const map = parseEnumMap(enumMapStr ?? '');
+      const key = value.trim().toLowerCase();
+      return map[key] ?? map[value.trim()] ?? coerceCsvValue(value);
+    }
+    case 'lowercase':
+      return value.toLowerCase();
+    case 'uppercase':
+      return value.toUpperCase();
+    case 'mask_phone':
+      return maskPhone(value);
+    default:
+      return coerceCsvValue(value);
+  }
+}
+
+function parseDateTime(value: string): string | undefined {
+  const trimmed = value.trim();
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+    const d = new Date(trimmed);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const d = new Date(`${trimmed}T00:00:00.000Z`);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+  }
+
+  // M/D/YY H:MM or M/D/YYYY H:MM (Excel-style, as in tx_log.csv)
+  const excelMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(trimmed);
+  if (excelMatch) {
+    const month = excelMatch[1]!.padStart(2, '0');
+    const day = excelMatch[2]!.padStart(2, '0');
+    let year = excelMatch[3]!;
+    if (year.length === 2) year = `20${year}`;
+    const hour = (excelMatch[4] ?? '0').padStart(2, '0');
+    const minute = (excelMatch[5] ?? '0').padStart(2, '0');
+    const d = new Date(`${year}-${month}-${day}T${hour}:${minute}:00.000Z`);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+  }
+
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+function parseEnumMap(enumMapStr: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const pair of enumMapStr.split(',')) {
+    const eqIndex = pair.indexOf('=');
+    if (eqIndex === -1) continue;
+    const key = pair.slice(0, eqIndex).trim().toLowerCase();
+    const val = pair.slice(eqIndex + 1).trim();
+    if (key) result[key] = val;
+  }
+  return result;
+}
+
+function maskPhone(value: string): string {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length < 7) return value;
+  const keep = 3;
+  return digits.slice(0, keep) + '*'.repeat(digits.length - keep * 2) + digits.slice(-keep);
 }
 
 function parseCsv(content: string, delimiter: string): string[][] {

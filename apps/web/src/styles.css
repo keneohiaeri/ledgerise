@@ -885,7 +885,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .field-map-head,
 .field-map-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) 74px 32px;
+  grid-template-columns: minmax(120px, 1fr) minmax(150px, 1fr) 110px minmax(130px, 1fr) 32px;
   gap: var(--s2);
   align-items: center;
 }
@@ -915,6 +915,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
   font-size: var(--text-xs);
   color: var(--color-text);
   background-color: var(--color-surface);
+}
+.field-map-row select {
+  padding-right: 24px;
 }
 .field-map-row input:focus,
 .field-map-row select:focus {

@@ -1260,28 +1260,23 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
   if (request.method === 'POST' && url.pathname === '/api/import/generic-csv') {
     if (!requireRole(dashboardPrincipal!, response, ['admin', 'finance'])) return;
-    const body = await readJsonBody(request);
-    if (!body.ok) {
-      sendJson(response, 400, { status: 'error', code: 'MALFORMED_JSON', message: body.message });
+    const upload = await readMultipartFile(request);
+    if (!upload.ok) {
+      sendJson(response, 400, { status: 'error', code: 'INVALID_BODY', message: upload.message });
       return;
     }
 
-    const payload = isRecord(body.value) ? body.value : {};
-    const content = readString(payload, 'content');
-    if (!content) {
-      sendJson(response, 400, {
-        status: 'error',
-        code: 'INVALID_BODY',
-        message: 'Body must include CSV content'
-      });
+    const content = upload.content.toString('utf8');
+    if (!content.trim()) {
+      sendJson(response, 400, { status: 'error', code: 'INVALID_BODY', message: 'Uploaded file is empty' });
       return;
     }
 
     const savedConfig = await getAdapterConfiguration(getOperatorId(request), 'generic-csv');
     const normalized = await normalizeGenericCsv({
       content,
-      filename: readString(payload, 'filename'),
-      config: readGenericCsvConfig(payload) ?? readGenericCsvConfigFromStored(savedConfig) ?? defaultGenericCsvConfig
+      filename: upload.filename,
+      config: readGenericCsvConfigFromStored(savedConfig) ?? defaultGenericCsvConfig
     });
 
     if (normalized.status === 'error') {
@@ -2224,6 +2219,56 @@ async function readJsonBody(
       message: 'Request body must be valid JSON'
     };
   }
+}
+
+async function readMultipartFile(
+  request: IncomingMessage
+): Promise<{ ok: true; content: Buffer; filename?: string } | { ok: false; message: string }> {
+  const contentType = request.headers['content-type'] ?? '';
+  const boundaryMatch = /boundary=([^\s;]+)/i.exec(contentType);
+  const boundary = boundaryMatch?.[1];
+  if (!boundary) {
+    return { ok: false, message: 'Expected multipart/form-data with a file field' };
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const body = Buffer.concat(chunks);
+
+  const dashBoundary = Buffer.from(`--${boundary}`);
+  const headerSep = Buffer.from('\r\n\r\n');
+
+  let pos = body.indexOf(dashBoundary);
+  while (pos !== -1) {
+    pos += dashBoundary.length;
+    if (body[pos] === 0x2d && body[pos + 1] === 0x2d) break;
+    if (body[pos] === 0x0d && body[pos + 1] === 0x0a) pos += 2;
+
+    const headerEnd = body.indexOf(headerSep, pos);
+    if (headerEnd === -1) break;
+
+    const headers = body.slice(pos, headerEnd).toString('utf8');
+    const contentStart = headerEnd + 4;
+    const nextBoundary = body.indexOf(dashBoundary, contentStart);
+    const rawEnd = nextBoundary === -1 ? body.length : nextBoundary;
+    const contentEnd =
+      rawEnd >= 2 && body[rawEnd - 2] === 0x0d && body[rawEnd - 1] === 0x0a ? rawEnd - 2 : rawEnd;
+
+    const filenameMatch = /filename="([^"]*)"/i.exec(headers);
+    if (filenameMatch !== null) {
+      return {
+        ok: true,
+        content: body.slice(contentStart, contentEnd),
+        filename: filenameMatch[1] || undefined
+      };
+    }
+
+    pos = nextBoundary === -1 ? -1 : nextBoundary;
+  }
+
+  return { ok: false, message: 'No file field found in multipart body' };
 }
 
 function sendJson(
