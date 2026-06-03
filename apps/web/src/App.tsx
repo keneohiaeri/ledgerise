@@ -3863,7 +3863,7 @@ function rowsFromMappingConfig(
       rows.push({
         sourcePath: '',
         canonicalField,
-        transform: defaultTransformForField(canonicalField),
+        transform: 'none',
         defaultValue: savedDefault === undefined ? '' : savedDefault === null ? 'null' : String(savedDefault),
         required: true
       });
@@ -4202,10 +4202,13 @@ function applyPreviewTransform(value: string, transform: string, enumMapStr: str
 }
 
 function applyDetectedFields(rows: AdapterMappingRow[], sourceFields: string[]) {
-  return rows.map((row) => ({
-    ...row,
-    sourcePath: sourceSuggestionForCanonical(row.canonicalField, sourceFields) ?? row.sourcePath
-  }));
+  return rows.map((row) => {
+    const suggested = sourceSuggestionForCanonical(row.canonicalField, sourceFields);
+    if (suggested && suggested !== row.sourcePath) {
+      return { ...row, sourcePath: suggested, transform: defaultTransformForField(row.canonicalField) };
+    }
+    return row;
+  });
 }
 
 function sourceSuggestionForCanonical(canonicalField: string, sourceFields: string[]) {
