@@ -2190,6 +2190,9 @@ async function bootstrapAdminUser(): Promise<void> {
   const password = process.env.LEDGERISE_BOOTSTRAP_ADMIN_PASSWORD;
   if (!email || !password) return;
 
+  const existing = await accessStore.findUserByEmail({ operatorId: defaultOperatorId, email });
+  if (existing) return;
+
   await accessStore.inviteUser({
     operatorId: defaultOperatorId,
     email,
