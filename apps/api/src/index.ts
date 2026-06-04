@@ -497,12 +497,18 @@ class PostgresAccessStore implements AccessStore {
 const { ingestionRepository, mappingRepository, postingRepository, engineRepository, accessStore, defaultOperatorId, repositoryKind, pgPool } =
   await createRepositories();
 await bootstrapAdminUser();
+if (pgPool) {
+  try {
+    await bootstrapSystemSettings(pgPool, defaultOperatorId);
+    await loadSystemSettingsIntoCache(pgPool, defaultOperatorId);
+  } catch {
+    log('warn', 'system_settings_load_failed', { hint: 'Run migration 0010_system_settings.sql' });
+  }
+}
 const ingestionService = new IngestionService(ingestionRepository);
 const mappingService = new MappingService(mappingRepository);
 const postingService = new PostingService(postingRepository);
-const engineService = new JournalEngineService(engineRepository, {
-  suspenseAccountCode: process.env.SUSPENSE_ACCOUNT_CODE ?? '199999'
-});
+const engineService = new JournalEngineService(engineRepository);
 
 const defaultGenericCsvConfig: GenericCsvConfig = {
   source_system: 'csv-backfill',
@@ -645,9 +651,9 @@ interface SystemSettings {
 }
 
 const defaultSystemSettings: SystemSettings = {
-  engineCronSchedule: '0 * * * *',
-  batchSize: 500,
-  suspenseAccountCode: 'X9999',
+  engineCronSchedule: process.env.ENGINE_SCHEDULE_CRON ?? '0 * * * *',
+  batchSize: Number(process.env.ENGINE_BATCH_SIZE ?? 500),
+  suspenseAccountCode: process.env.SUSPENSE_ACCOUNT_CODE ?? '9999',
   maxRetryAttempts: 5,
   backoffStrategy: 'exponential'
 };
@@ -663,6 +669,47 @@ function patchSystemSettings(operatorId: string, patch: Partial<SystemSettings>)
   const updated: SystemSettings = { ...current, ...patch };
   systemSettingsStore.set(operatorId, updated);
   return updated;
+}
+
+async function bootstrapSystemSettings(pool: pg.Pool, operatorId: string): Promise<void> {
+  const defaults = getSystemSettings(operatorId);
+  await pool.query(
+    `INSERT INTO system_settings (operator_id, engine_cron_schedule, batch_size, suspense_account_code, max_retry_attempts, backoff_strategy)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (operator_id) DO NOTHING`,
+    [operatorId, defaults.engineCronSchedule, defaults.batchSize, defaults.suspenseAccountCode, defaults.maxRetryAttempts, defaults.backoffStrategy]
+  );
+}
+
+async function loadSystemSettingsIntoCache(pool: pg.Pool, operatorId: string): Promise<void> {
+  const result = await pool.query<{
+    engine_cron_schedule: string;
+    batch_size: number;
+    suspense_account_code: string;
+    max_retry_attempts: number;
+    backoff_strategy: string;
+  }>('SELECT * FROM system_settings WHERE operator_id = $1', [operatorId]);
+
+  if (result.rows[0]) {
+    const row = result.rows[0];
+    systemSettingsStore.set(operatorId, {
+      engineCronSchedule: row.engine_cron_schedule,
+      batchSize: row.batch_size,
+      suspenseAccountCode: row.suspense_account_code,
+      maxRetryAttempts: row.max_retry_attempts,
+      backoffStrategy: row.backoff_strategy as 'exponential' | 'fixed'
+    });
+  }
+}
+
+async function persistSystemSettings(pool: pg.Pool, operatorId: string, settings: SystemSettings): Promise<void> {
+  await pool.query(
+    `UPDATE system_settings
+     SET engine_cron_schedule = $2, batch_size = $3, suspense_account_code = $4,
+         max_retry_attempts = $5, backoff_strategy = $6, updated_at = now()
+     WHERE operator_id = $1`,
+    [operatorId, settings.engineCronSchedule, settings.batchSize, settings.suspenseAccountCode, settings.maxRetryAttempts, settings.backoffStrategy]
+  );
 }
 
 const userRoles = new Set(['admin', 'finance', 'auditor']);
@@ -1901,7 +1948,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     const settings = getSystemSettings(getOperatorId(request));
     const result = await engineService.runOnce({
       operatorId: getOperatorId(request),
-      limit: (Number.isInteger(limit) && limit! > 0 ? limit : undefined) ?? settings.batchSize
+      limit: (Number.isInteger(limit) && limit! > 0 ? limit : undefined) ?? settings.batchSize,
+      suspenseAccountCode: settings.suspenseAccountCode
     });
     log('info', 'engine_run', {
       operatorId: getOperatorId(request),
@@ -1956,6 +2004,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     }
 
     const updated = patchSystemSettings(getOperatorId(request), patch);
+    if (pgPool) await persistSystemSettings(pgPool, getOperatorId(request), updated);
     sendJson(response, 200, { record: updated });
     return;
   }

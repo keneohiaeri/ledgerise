@@ -79,6 +79,7 @@ export interface JournalEngineOptions {
 export interface JournalEngineRunInput {
   operatorId: string;
   limit?: number;
+  suspenseAccountCode?: string;
 }
 
 export interface JournalEngineRunResult {
@@ -122,6 +123,7 @@ export class JournalEngineService {
 
   async runOnce(input: JournalEngineRunInput): Promise<JournalEngineRunResult> {
     const limit = input.limit ?? 100;
+    const suspenseAccountCode = input.suspenseAccountCode ?? this.suspenseAccountCode;
     const transactions = await this.repository.listEligibleTransactions({
       operatorId: input.operatorId,
       limit
@@ -149,7 +151,7 @@ export class JournalEngineService {
       const entryInputs =
         transaction.record.status === 'reversed'
           ? await this.buildReversalEntries(transaction)
-          : this.buildStandardEntries(transaction, resolveMapping(transaction.record, rules));
+          : this.buildStandardEntries(transaction, resolveMapping(transaction.record, rules), suspenseAccountCode);
 
       if (!entryInputs) {
         skipped.push({ transactionId: transaction.id, reason: 'reversal_original_missing' });
@@ -174,7 +176,8 @@ export class JournalEngineService {
 
   private buildStandardEntries(
     transaction: EngineTransaction,
-    mapping: ResolvedMapping
+    mapping: ResolvedMapping,
+    suspenseAccountCode: string
   ): NewJournalEntry[] {
     const record = transaction.record;
 
@@ -190,14 +193,14 @@ export class JournalEngineService {
         generatedAt: this.now(),
         lines: [
           {
-            accountCode: this.suspenseAccountCode,
+            accountCode: suspenseAccountCode,
             side: 'debit',
             amount: record.amount,
             currency: record.currency,
             lineOrder: 1
           },
           {
-            accountCode: this.suspenseAccountCode,
+            accountCode: suspenseAccountCode,
             side: 'credit',
             amount: record.amount,
             currency: record.currency,
