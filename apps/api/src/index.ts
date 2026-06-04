@@ -2139,6 +2139,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     }
     const client = await pgPool.connect();
     try {
+      const bootstrapEmail = process.env.LEDGERISE_BOOTSTRAP_ADMIN_EMAIL;
       await client.query(`
         TRUNCATE
           posting_artifact_downloads,
@@ -2155,10 +2156,15 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
           adapter_poll_runs,
           adapter_poll_cursors,
           audit_events,
-          api_keys,
-          users
+          api_keys
         RESTART IDENTITY CASCADE
       `);
+      if (bootstrapEmail) {
+        await client.query(
+          `DELETE FROM users WHERE email != $1`,
+          [bootstrapEmail]
+        );
+      }
       await client.query(`
         INSERT INTO chart_of_accounts (operator_id, code, name, type)
         SELECT operators.id, account.code, account.name, account.type
@@ -2175,18 +2181,6 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
         WHERE operators.slug = $1
         ON CONFLICT (operator_id, code) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type, updated_at = now()
       `, [process.env.DEFAULT_OPERATOR_SLUG ?? 'local-operator']);
-      const bootstrapEmail = process.env.LEDGERISE_BOOTSTRAP_ADMIN_EMAIL;
-      const bootstrapPassword = process.env.LEDGERISE_BOOTSTRAP_ADMIN_PASSWORD;
-      const bootstrapName = process.env.LEDGERISE_BOOTSTRAP_ADMIN_NAME ?? 'Ledgerise Admin';
-      if (bootstrapEmail && bootstrapPassword) {
-        await accessStore.inviteUser({
-          operatorId: defaultOperatorId,
-          email: bootstrapEmail,
-          displayName: bootstrapName,
-          role: 'admin',
-          passwordHash: hashPassword(bootstrapPassword)
-        });
-      }
       log('info', 'demo_reset', { operatorId: principal.operatorId, userId: principal.userId });
       sendJson(response, 200, { status: 'ok' });
     } finally {
