@@ -562,10 +562,14 @@ export function App() {
   const [transactionDateTo, setTransactionDateTo] = useState('');
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionRecord | null>(null);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [journalStats, setJournalStats] = useState<Record<string, number>>({});
   const [journalFilter, setJournalFilter] = useState<JournalEntry['posting_status'] | 'all'>('all');
+  const [journalOffset, setJournalOffset] = useState(0);
+  const [journalPage, setJournalPage] = useState<PageInfo>({ limit: 100, offset: 0, total: 0 });
   const [journalDateFrom, setJournalDateFrom] = useState('');
   const [journalDateTo, setJournalDateTo] = useState('');
   const [selectedJournal, setSelectedJournal] = useState<JournalEntry | null>(null);
+  const [transactionStats, setTransactionStats] = useState<{ settled: number; pendingTest: number; unmapped: number }>({ settled: 0, pendingTest: 0, unmapped: 0 });
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -612,7 +616,7 @@ export function App() {
   useEffect(() => {
     if (!authToken || authChecking || !authUser) return;
     void refreshOperationalData();
-  }, [authToken, authChecking, authUser, journalFilter, transactionOffset]);
+  }, [authToken, authChecking, authUser, journalFilter, journalOffset, transactionOffset]);
 
   const activeRules = rules.filter((rule) => rule.status === 'active');
   const inactiveRules = rules.filter((rule) => rule.status === 'inactive');
@@ -703,10 +707,9 @@ export function App() {
     setError('');
 
     try {
-      const journalPath =
-        journalFilter === 'all'
-          ? '/api/journal-entries'
-          : `/api/journal-entries?posting_status=${journalFilter}`;
+      const journalPath = journalFilter === 'all'
+        ? `/api/journal-entries?limit=100&offset=${journalOffset}`
+        : `/api/journal-entries?posting_status=${journalFilter}&limit=100&offset=${journalOffset}`;
       const transactionPath = `/api/transactions?limit=${transactionPageSize}&offset=${transactionOffset}`;
       const [
         coaResponse,
@@ -717,17 +720,21 @@ export function App() {
         pollStatusResponse,
         usersResponse,
         apiKeysResponse,
-        systemSettingsResponse
+        systemSettingsResponse,
+        statsResponse,
+        txStatsResponse
       ] = await Promise.all([
         apiGet<{ records: ChartAccount[] }>('/api/coa'),
         apiGet<{ records: AdapterRecord[] }>('/api/adapters'),
         apiGet<{ records: MappingRule[] }>('/api/mapping-rules'),
         apiGet<{ records: TransactionRecord[]; page: PageInfo }>(transactionPath),
-        apiGet<{ records: JournalEntry[] }>(journalPath),
+        apiGet<{ records: JournalEntry[]; page: PageInfo }>(journalPath),
         apiGet<PollStatusRecord>('/api/adapters/generic-poll/poll-status?limit=3').catch(() => null),
         apiGet<{ records: UserRecord[] }>('/api/users').catch(() => ({ records: [] })),
         apiGet<{ records: ApiKeyRecord[] }>('/api/api-keys').catch(() => ({ records: [] })),
-        apiGet<{ record: SystemSettings }>('/api/system-settings').catch(() => null)
+        apiGet<{ record: SystemSettings }>('/api/system-settings').catch(() => null),
+        apiGet<{ stats: Record<string, number> }>('/api/journal-entries/stats').catch(() => ({ stats: {} })),
+        apiGet<{ stats: { settled: number; pendingTest: number; unmapped: number } }>('/api/transactions/stats').catch(() => ({ stats: { settled: 0, pendingTest: 0, unmapped: 0 } }))
       ]);
       setAccounts(coaResponse.records);
       setAdapters(adapterResponse.records);
@@ -736,9 +743,12 @@ export function App() {
       setTransactions(transactionResponse.records);
       setTransactionPage(transactionResponse.page);
       setJournalEntries(journalResponse.records);
+      setJournalPage(journalResponse.page);
       setUsers(usersResponse.records);
       setApiKeys(apiKeysResponse.records);
       if (systemSettingsResponse) setSystemSettings(systemSettingsResponse.record);
+      setJournalStats(statsResponse.stats);
+      setTransactionStats(txStatsResponse.stats);
     } catch (caught) {
       const code = caught instanceof Error ? (caught as Error & { code?: string }).code : undefined;
       if (code === 'MUST_CHANGE_PASSWORD') {
@@ -1165,12 +1175,14 @@ export function App() {
             page={transactionPage}
             setTransactionOffset={setTransactionOffset}
             transactions={transactions}
+            transactionStats={transactionStats}
           />
         ) : null}
         {screen === 'journal-log' ? (
           <JournalLogView
             accounts={accounts}
             entries={journalEntries}
+            stats={journalStats}
             error={error}
             filter={journalFilter}
             dateFrom={journalDateFrom}
@@ -1183,7 +1195,9 @@ export function App() {
             selectedJournal={selectedJournal}
             selectJournal={setSelectedJournal}
             closeJournalDrawer={closeJournalDrawer}
-            setFilter={setJournalFilter}
+            setFilter={(f) => { setJournalFilter(f); setJournalOffset(0); }}
+            page={journalPage}
+            setJournalOffset={setJournalOffset}
           />
         ) : null}
         {screen === 'mapping-rules' ? (
@@ -1287,6 +1301,7 @@ function TransactionsView(props: {
   page: PageInfo;
   setTransactionOffset: (offset: number) => void;
   transactions: TransactionRecord[];
+  transactionStats: { settled: number; pendingTest: number; unmapped: number };
 }) {
   const {
     error,
@@ -1312,14 +1327,9 @@ function TransactionsView(props: {
     openTransactionJournal,
     page,
     setTransactionOffset,
-    transactions
+    transactions,
+    transactionStats
   } = props;
-  const settled = transactions.filter((transaction) => transaction.status === 'settled').length;
-  const pending = transactions.filter((transaction) => transaction.status === 'pending').length;
-  const unmapped = transactions.filter(
-    (transaction) => transactionJournalStatus(transaction, journalEntries) === 'unmapped'
-  ).length;
-  const test = transactions.filter((transaction) => transaction.source.environment === 'test').length;
   const visibleTransactions = transactions.filter((transaction) => {
     const journalStatus = transactionJournalStatus(transaction, journalEntries);
     if (transactionFilter === 'unmapped' && journalStatus !== 'unmapped') return false;
@@ -1359,9 +1369,9 @@ function TransactionsView(props: {
 
       <div className="stat-bar cols-4">
         <StatCell label="Total" value={String(page.total)} sub="canonical records stored" />
-        <StatCell label="Settled" value={String(settled)} sub="eligible for journal generation" tone="ok" />
-        <StatCell label="Unmapped" value={String(unmapped)} sub="journaled to suspense" tone={unmapped ? 'warn' : undefined} />
-        <StatCell label="Pending/Test" value={String(pending + test)} sub="blocked from posting" />
+        <StatCell label="Settled" value={String(transactionStats.settled)} sub="eligible for journal generation" tone="ok" />
+        <StatCell label="Unmapped" value={String(transactionStats.unmapped)} sub="journaled to suspense" tone={transactionStats.unmapped ? 'warn' : undefined} />
+        <StatCell label="Pending/Test" value={String(transactionStats.pendingTest)} sub="blocked from posting" />
       </div>
 
       <div className="table-workspace">
@@ -1814,6 +1824,7 @@ function MappingRulesView(props: {
 function JournalLogView(props: {
   accounts: ChartAccount[];
   entries: JournalEntry[];
+  stats: Record<string, number>;
   error: string;
   filter: JournalEntry['posting_status'] | 'all';
   dateFrom: string;
@@ -1827,10 +1838,13 @@ function JournalLogView(props: {
   selectJournal: (entry: JournalEntry) => void;
   closeJournalDrawer: () => void;
   setFilter: (filter: JournalEntry['posting_status'] | 'all') => void;
+  page: PageInfo;
+  setJournalOffset: (offset: number) => void;
 }) {
   const {
     accounts,
     entries,
+    stats,
     error,
     filter,
     dateFrom,
@@ -1843,18 +1857,25 @@ function JournalLogView(props: {
     selectedJournal,
     selectJournal,
     closeJournalDrawer,
-    setFilter
+    setFilter,
+    page,
+    setJournalOffset
   } = props;
+  const journalPageSize = 100;
+  const pageStart = page.total === 0 ? 0 : page.offset + 1;
+  const pageEnd = Math.min(page.offset + page.limit, page.total);
+  const canPageBack = page.offset > 0;
+  const canPageForward = page.offset + page.limit < page.total;
   const visibleEntries = entries.filter((entry) => {
     const date = (entry.transaction?.occurred_at ?? entry.generated_at).slice(0, 10);
     if (dateFrom && date < dateFrom) return false;
     if (dateTo && date > dateTo) return false;
     return true;
   });
-  const posted = entries.filter((entry) => entry.posting_status === 'posted').length;
-  const failed = entries.filter((entry) => ['failed', 'retry_exhausted'].includes(entry.posting_status)).length;
-  const unmapped = entries.filter((entry) => entry.posting_status === 'unmapped').length;
-  const generated = entries.filter((entry) => entry.posting_status === 'generated').length;
+  const posted = stats.posted ?? 0;
+  const failed = (stats.failed ?? 0) + (stats.retry_exhausted ?? 0);
+  const unmapped = stats.unmapped ?? 0;
+  const generated = (stats.generated ?? 0) + (stats.posting ?? 0);
   const lastGeneratedAt = entries[0]?.generated_at;
 
   return (
@@ -1903,7 +1924,7 @@ function JournalLogView(props: {
           <span className="stat-sub">
             {loading
               ? 'Loading journal entries...'
-              : `${visibleEntries.length} entries${lastGeneratedAt ? ` · last generated ${formatDateTime(lastGeneratedAt)}` : ''}`}
+              : `${page.total} entries${lastGeneratedAt ? ` · last generated ${formatDateTime(lastGeneratedAt)}` : ''}`}
           </span>
         </div>
         {error ? <div className="form-error journal-error">{error}</div> : null}
@@ -1953,6 +1974,29 @@ function JournalLogView(props: {
             </tbody>
           </table>
         </div>
+        {page.total > journalPageSize ? (
+          <div className="table-pagination">
+            <span className="stat-sub">
+              Showing {pageStart}-{pageEnd} of {page.total}
+            </span>
+            <div className="pagination-actions">
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={!canPageBack || loading}
+                onClick={() => setJournalOffset(Math.max(0, page.offset - journalPageSize))}
+              >
+                Previous
+              </button>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={!canPageForward || loading}
+                onClick={() => setJournalOffset(page.offset + journalPageSize)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className={`drawer-overlay${selectedJournal ? ' open' : ''}`} onClick={closeJournalDrawer} />

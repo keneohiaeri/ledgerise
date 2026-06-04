@@ -1357,6 +1357,31 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/transactions/stats') {
+    if (!requireRole(dashboardPrincipal!, response, ['admin', 'finance', 'auditor'])) return;
+    const operatorId = getOperatorId(request);
+    if (!pgPool) {
+      sendJson(response, 200, { stats: { settled: 0, pendingTest: 0, unmapped: 0 } });
+      return;
+    }
+    const result = await pgPool.query<{ settled: string; pending_test: string; unmapped: string }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'settled' AND source_environment != 'test')::text AS settled,
+         COUNT(*) FILTER (WHERE status != 'settled' OR source_environment = 'test')::text AS pending_test,
+         (SELECT COUNT(DISTINCT transaction_id)::text FROM journal_entries
+          WHERE operator_id = $1 AND posting_status = 'unmapped') AS unmapped
+       FROM canonical_transactions WHERE operator_id = $1`,
+      [operatorId]
+    );
+    const row = result.rows[0];
+    sendJson(response, 200, { stats: {
+      settled: Number(row?.settled ?? 0),
+      pendingTest: Number(row?.pending_test ?? 0),
+      unmapped: Number(row?.unmapped ?? 0)
+    }});
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/transactions') {
     const operatorId = getOperatorId(request);
     const filters = parseTransactionListQuery(url, operatorId);
@@ -1412,6 +1437,23 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
       records: ingestionErrors.records.map(toIngestionErrorResponse),
       page: ingestionErrors.page
     });
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/journal-entries/stats') {
+    if (!requireRole(dashboardPrincipal!, response, ['admin', 'finance', 'auditor'])) return;
+    const operatorId = getOperatorId(request);
+    const result = pgPool
+      ? await pgPool.query<{ posting_status: string; count: string }>(
+          `SELECT posting_status, COUNT(*)::text AS count
+           FROM journal_entries WHERE operator_id = $1
+           GROUP BY posting_status`,
+          [operatorId]
+        )
+      : { rows: [] };
+    const counts: Record<string, number> = {};
+    for (const row of result.rows) counts[row.posting_status] = Number(row.count);
+    sendJson(response, 200, { stats: counts });
     return;
   }
 
