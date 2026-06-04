@@ -2105,7 +2105,6 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
           posting_batches,
           journal_entry_lines,
           journal_entries,
-          mapping_rule_credit_splits,
           mapping_rule_versions,
           mapping_rules,
           chart_of_accounts,
