@@ -3712,7 +3712,7 @@ function AdapterConfigFieldView({ field }: { field: AdapterConfigField }) {
                 type="text"
                 name={`map:${mappingField.id}:${index}:defaultValue`}
                 value={row.defaultValue}
-                placeholder={row.transform === 'enum_map' ? 'src=canonical, ...' : row.sourcePath ? '' : 'type a value...'}
+                placeholder={row.transform === 'enum_map' ? 'src=canonical, ...' : row.sourcePath ? '' : (defaultValueHints[row.canonicalField] ?? 'type a value...')}
                 style={{ opacity: !row.sourcePath || row.transform === 'enum_map' ? 1 : 0.35 }}
                 onChange={(event) => updateMappingRow(setMappingRows, index, { defaultValue: event.target.value })}
               />
@@ -4294,13 +4294,32 @@ function isRecord(input: unknown): input is Record<string, unknown> {
 const requiredCanonicalFields = new Set([
   'source_id',
   'occurred_at',
+  'settled_at',
   'status',
   'amount',
   'currency',
   'type',
   'direction',
-  'product.line'
+  'channel',
+  'product.line',
+  'principal.id'
 ]);
+
+const defaultValueHints: Record<string, string> = {
+  currency: 'e.g. NGN, USD, KES',
+  direction: 'debit or credit',
+  channel: 'web, mobile, api, pos, ussd, agent...',
+  settled_at: 'null or ISO datetime',
+  'principal.id': 'customer identifier',
+  'principal.type': 'customer, merchant, agent, internal',
+  'principal.reference': 'masked phone or account no.',
+  'product.line': 'e.g. consumer-app',
+  'product.biller': 'e.g. mtn, ikeja-electric',
+  'product.biller_category': 'e.g. airtime, electricity',
+  type: 'e.g. payment.electricity',
+  status: 'settled, pending, failed...',
+  source_id: 'unique transaction reference',
+};
 
 const sourceFieldSuggestions: Record<string, string[]> = {
   source_id: [
