@@ -2762,7 +2762,7 @@ function UsersSettingsPanel(props: {
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <button className="btn-link primary" type="button" onClick={() => openEditUser(user)}>Edit</button>
-                    {!(DEMO_MODE && user.email === DEMO_EMAIL) && (
+                    {!DEMO_MODE && (
                       <button className="btn-link primary" type="button" onClick={() => void resetUserPassword(user)}>Reset password</button>
                     )}
                   </div>
