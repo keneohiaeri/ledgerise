@@ -17,7 +17,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/engine.test.mjs"
   },
   "dependencies": {
     "@ledgerise/canonical-types": "0.1.0",

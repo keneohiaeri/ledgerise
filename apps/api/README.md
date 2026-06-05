@@ -15,6 +15,43 @@ Responsibilities:
 
 Adapter-specific parsing and posting logic must stay outside the API core.
 
+## Code Structure
+
+```
+apps/api/src/
+├── index.ts               ← server setup and port binding only (~100 lines)
+├── router.ts              ← createRouter(deps) — full dispatch chain over all route modules
+├── container.ts           ← repository and service wiring; InMemoryAccessStore; system settings cache
+├── lib/
+│   ├── http.ts            ← sendJson, readJsonBody, applyCors, getHeader
+│   └── crypto.ts          ← encryptConfig, decryptConfig, hashPassword, verifyPassword, signAuthToken, verifyAuthToken
+├── middleware/
+│   ├── auth.ts            ← requireRole, verifyAuthToken, AuthPrincipal type
+│   └── rateLimit.ts       ← checkIngestRateLimit, sliding-window rate limit state
+└── routes/
+    ├── auth.ts            ← /api/auth/*
+    ├── ingestion.ts       ← /api/ingest/*, /api/adapters*, /api/ingestion-errors
+    ├── transactions.ts    ← /api/transactions*
+    ├── mapping.ts         ← /api/mapping-rules*
+    ├── coa.ts             ← /api/coa*
+    ├── engine.ts          ← /api/journal-entries*, /api/journal-log*, /api/journals*
+    ├── posting.ts         ← /api/posting-batches*, /api/posting-artifacts* (API-key auth)
+    ├── adapters.ts        ← /api/api-keys*
+    ├── users.ts           ← /api/users*
+    └── settings.ts        ← /api/system-settings, /api/audit-log.csv
+```
+
+Each route file exports a single `handleXxxRoutes(request, response, url, deps): Promise<boolean>` function. Returning `true` means the route was handled; `false` means the request is passed to the next handler. This makes each module independently testable with an in-memory container — no HTTP server, no database connection required.
+
+### Running Tests
+
+```bash
+cd apps/api
+npm test
+```
+
+Tests use Node's built-in `node:test` runner with `tsx` for TypeScript support. No compiled output needed.
+
 ## Posting File Exchange
 
 Outbound CSV exchange endpoints require an API key with scoped access. Pass the key with:
