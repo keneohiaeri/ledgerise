@@ -594,6 +594,51 @@
       sync();
     });
 
+    (function () {
+      const form = document.querySelector('.waitlist-form');
+      if (!form) return;
+
+      // Insert a message element right after the form
+      const msg = document.createElement('p');
+      msg.style.cssText = 'margin:12px 0 0;font-size:.875rem;min-height:1.25em;';
+      form.insertAdjacentElement('afterend', msg);
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        msg.textContent = '';
+        msg.style.color = '';
+
+        try {
+          const res = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { 'Accept': 'application/json' },
+          });
+
+          if (res.ok) {
+            msg.style.color = '#22c55e';
+            msg.textContent = "You're on the list — we'll be in touch.";
+            form.reset();
+            document.querySelectorAll('.wf-select-native').forEach(sel =>
+              sel.classList.toggle('wf-select-filled', sel.value !== '')
+            );
+          } else {
+            const data = await res.json().catch(() => ({}));
+            msg.style.color = '#ef4444';
+            msg.textContent = (data.errors && data.errors.map(err => err.message).join(', '))
+              || 'Submission failed — please try again.';
+            btn.disabled = false;
+          }
+        } catch (_) {
+          msg.style.color = '#ef4444';
+          msg.textContent = 'Network error — please check your connection and try again.';
+          btn.disabled = false;
+        }
+      });
+    }());
+
   </script>
 </body>
 
